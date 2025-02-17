@@ -26,7 +26,6 @@ import com.google.devtools.build.lib.actions.Artifact.SpecialArtifactType;
 import com.google.devtools.build.lib.actions.Artifact.TreeFileArtifact;
 import com.google.devtools.build.lib.actions.ArtifactRoot.RootType;
 import com.google.devtools.build.lib.actions.CompletionContext.ArtifactReceiver;
-import com.google.devtools.build.lib.actions.FileArtifactValue.RemoteFileArtifactValue;
 import com.google.devtools.build.lib.actions.util.ActionsTestUtil;
 import com.google.devtools.build.lib.bugreport.BugReporter;
 import com.google.devtools.build.lib.skyframe.TreeArtifactValue;
@@ -47,16 +46,12 @@ import org.mockito.InOrder;
 @RunWith(JUnit4.class)
 public final class CompletionContextTest {
   private static final FileArtifactValue DUMMY_METADATA =
-      RemoteFileArtifactValue.create(
-          /* digest= */ new byte[0],
-          /* size= */ 0,
-          /* locationIndex= */ 0,
-          /* expireAtEpochMilli= */ -1);
+      FileArtifactValue.createForRemoteFile(
+          /* digest= */ new byte[0], /* size= */ 0, /* locationIndex= */ 0);
 
   private final ActionInputMap inputMap = new ActionInputMap(BugReporter.defaultInstance(), 0);
   private final Map<Artifact, TreeArtifactValue> treeExpansions = new HashMap<>();
-  private final Map<Artifact, ImmutableList<FilesetOutputSymlink>> filesetExpansions =
-      new HashMap<>();
+  private final Map<Artifact, FilesetOutputTree> filesetExpansions = new HashMap<>();
   private Path execRoot;
   private ArtifactRoot outputRoot;
 
@@ -96,20 +91,13 @@ public final class CompletionContextTest {
   }
 
   @Test
-  public void treeArtifact_omitted() {
-    SpecialArtifact tree = createTreeArtifact("tree");
-    inputMap.putTreeArtifact(tree, TreeArtifactValue.OMITTED_TREE_MARKER, /* depOwner= */ null);
-    CompletionContext ctx = createCompletionContext(/* expandFilesets= */ true);
-
-    assertThat(visit(ctx, tree)).isEmpty();
-  }
-
-  @Test
   public void fileset_noExpansion() {
     SpecialArtifact fileset = createFileset("fs");
     inputMap.put(fileset, DUMMY_METADATA, /* depOwner= */ null);
     filesetExpansions.put(
-        fileset, ImmutableList.of(filesetLink("a1", "b1"), filesetLink("a2", "b2")));
+        fileset,
+        FilesetOutputTree.create(
+            ImmutableList.of(filesetLink("a1", "b1"), filesetLink("a2", "b2"))));
     CompletionContext ctx = createCompletionContext(/* expandFilesets= */ false);
 
     ArtifactReceiver receiver = mock(ArtifactReceiver.class);
@@ -126,7 +114,7 @@ public final class CompletionContextTest {
     inputMap.put(fileset, DUMMY_METADATA, /* depOwner= */ null);
     ImmutableList<FilesetOutputSymlink> links =
         ImmutableList.of(filesetLink("a1", "b1"), filesetLink("a2", "b2"));
-    filesetExpansions.put(fileset, links);
+    filesetExpansions.put(fileset, FilesetOutputTree.create(links));
     CompletionContext ctx = createCompletionContext(/* expandFilesets= */ true);
 
     ArtifactReceiver receiver = mock(ArtifactReceiver.class);
@@ -139,7 +127,7 @@ public final class CompletionContextTest {
         .verify(receiver)
         .acceptFilesetMapping(fileset, PathFragment.create("a2"), execRoot.getRelative("b2"));
 
-    assertThat(ctx.expandFileset(fileset)).isEqualTo(links);
+    assertThat(ctx.expandFileset(fileset).symlinks()).isEqualTo(links);
   }
 
   private static List<Artifact> visit(CompletionContext ctx, Artifact artifact) {

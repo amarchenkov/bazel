@@ -27,8 +27,10 @@ import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.actions.CommandLineExpansionException;
 import com.google.devtools.build.lib.actions.ExecException;
 import com.google.devtools.build.lib.actions.UserExecException;
-import com.google.devtools.build.lib.analysis.config.BuildConfigurationValue;
 import com.google.devtools.build.lib.analysis.config.PerLabelOptions;
+import com.google.devtools.build.lib.analysis.config.RunUnder;
+import com.google.devtools.build.lib.analysis.config.RunUnder.CommandRunUnder;
+import com.google.devtools.build.lib.analysis.config.RunUnder.LabelRunUnder;
 import com.google.devtools.build.lib.analysis.test.TestRunnerAction.ResolvedPaths;
 import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.events.Event;
@@ -45,6 +47,7 @@ import com.google.devtools.build.lib.server.FailureDetails.TestAction;
 import com.google.devtools.build.lib.server.FailureDetails.TestAction.Code;
 import com.google.devtools.build.lib.shell.TerminationStatus;
 import com.google.devtools.build.lib.util.Fingerprint;
+import com.google.devtools.build.lib.util.OS;
 import com.google.devtools.build.lib.util.io.OutErr;
 import com.google.devtools.build.lib.vfs.Path;
 import com.google.devtools.build.lib.vfs.PathFragment;
@@ -54,7 +57,6 @@ import com.google.devtools.build.lib.view.test.TestStatus.TestResultData;
 import java.io.Closeable;
 import java.io.IOException;
 import java.io.InputStream;
-import java.time.Duration;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -143,7 +145,7 @@ public abstract class TestStrategy implements TestActionContext {
   }
 
   /** Removes directory if it exists and recreates it. */
-  private void recreateDirectory(Path directory) throws IOException {
+  private static void recreateDirectory(Path directory) throws IOException {
     directory.deleteTree();
     directory.createDirectoryAndParents();
   }
@@ -211,12 +213,17 @@ public abstract class TestStrategy implements TestActionContext {
   public static ImmutableList<String> expandedArgsFromAction(TestRunnerAction testAction)
       throws CommandLineExpansionException, InterruptedException {
     List<String> args = Lists.newArrayList();
+    OS executionOs = testAction.getExecutionSettings().getExecutionOs();
 
     Artifact testSetup = testAction.getTestSetupScript();
-    args.add(testSetup.getExecPath().getCallablePathString());
+    args.add(testSetup.getExecPath().getCallablePathStringForOs(executionOs));
 
     if (testAction.isCoverageMode()) {
-      args.add(testAction.getCollectCoverageScript().getExecPathString());
+      args.add(
+          testAction
+              .getCollectCoverageScript()
+              .getExecPath()
+              .getCallablePathStringForOs(executionOs));
     }
 
     TestTargetExecutionSettings execSettings = testAction.getExecutionSettings();
@@ -227,6 +234,7 @@ public abstract class TestStrategy implements TestActionContext {
     }
 
     // Execute the test using the alias in the runfiles tree, as mandated by the Test Encyclopedia.
+    // Do not use getCallablePathStringForOs as tw.exe expects a path with forward slashes.
     args.add(execSettings.getExecutable().getRunfilesPath().getCallablePathString());
     Iterables.addAll(args, execSettings.getArgs().arguments());
     return ImmutableList.copyOf(args);
@@ -234,22 +242,32 @@ public abstract class TestStrategy implements TestActionContext {
 
   private static void addRunUnderArgs(TestRunnerAction testAction, List<String> args) {
     TestTargetExecutionSettings execSettings = testAction.getExecutionSettings();
-    if (execSettings.getRunUnderExecutable() != null) {
-      args.add(execSettings.getRunUnderExecutable().getRunfilesPath().getCallablePathString());
-    } else {
-      if (execSettings.needsShell(testAction.isExecutedOnWindows())) {
-        // TestActionBuilder constructs TestRunnerAction with a 'null' shell only when none is
-        // required. Something clearly went wrong.
-        Preconditions.checkNotNull(testAction.getShExecutableMaybe(), "%s", testAction);
-        String shellExecutable = testAction.getShExecutableMaybe().getPathString();
-        args.add(shellExecutable);
-        args.add("-c");
-        args.add("\"$@\"");
-        args.add(shellExecutable); // Sets $0.
+    OS executionOs = execSettings.getExecutionOs();
+    RunUnder runUnder = execSettings.getRunUnder();
+    switch (runUnder) {
+      case LabelRunUnder ignored -> {
+        args.add(
+            execSettings
+                .getRunUnderExecutable()
+                .getRunfilesPath()
+                .getCallablePathStringForOs(executionOs));
       }
-      args.add(execSettings.getRunUnder().getCommand());
+      case CommandRunUnder commandRunUnder -> {
+        if (execSettings.needsShell()) {
+          // TestActionBuilder constructs TestRunnerAction with a 'null' shell only when none is
+          // required. Something clearly went wrong.
+          Preconditions.checkNotNull(testAction.getShExecutableMaybe(), "%s", testAction);
+          String shellExecutable =
+              testAction.getShExecutableMaybe().getCallablePathStringForOs(executionOs);
+          args.add(shellExecutable);
+          args.add("-c");
+          args.add("\"$@\"");
+          args.add(shellExecutable); // Sets $0.
+        }
+        args.add(commandRunUnder.command());
+      }
     }
-    args.addAll(testAction.getExecutionSettings().getRunUnder().getOptions());
+    args.addAll(runUnder.options());
   }
 
   /**
@@ -287,19 +305,6 @@ public abstract class TestStrategy implements TestActionContext {
       }
     }
     return defaultTestAttempts;
-  }
-
-  /**
-   * Returns timeout value in seconds that should be used for the given test action. We always use
-   * the "categorical timeouts" which are based on the --test_timeout flag. A rule picks its timeout
-   * but ends up with the same effective value as all other rules in that bucket.
-   */
-  protected static final Duration getTimeout(TestRunnerAction testAction) {
-    BuildConfigurationValue configuration = testAction.getConfiguration();
-    return configuration
-        .getFragment(TestConfiguration.class)
-        .getTestTimeout()
-        .get(testAction.getTestProperties().getTimeout());
   }
 
   /*
@@ -439,8 +444,8 @@ public abstract class TestStrategy implements TestActionContext {
   }
 
   /**
-   * For an given environment, returns a subset containing all variables in the given list if they
-   * are defined in the given environment.
+   * Returns a subset containing all variables in the given list if they are defined in the given
+   * environment.
    */
   @VisibleForTesting
   public static Map<String, String> getMapping(

@@ -16,6 +16,12 @@ package com.google.devtools.build.lib.skyframe.serialization.analysis;
 import com.google.devtools.build.lib.cmdline.PackageIdentifier;
 import com.google.devtools.build.lib.skyframe.serialization.FingerprintValueService;
 import com.google.devtools.build.lib.skyframe.serialization.ObjectCodecs;
+import com.google.devtools.build.lib.skyframe.serialization.SerializationException;
+import com.google.devtools.build.lib.skyframe.serialization.SkyValueRetriever.FrontierNodeVersion;
+import com.google.devtools.build.lib.skyframe.serialization.SkyValueRetriever.RetrievalResult;
+import com.google.devtools.build.lib.skyframe.serialization.analysis.RemoteAnalysisCachingOptions.RemoteAnalysisCacheMode;
+import com.google.devtools.build.lib.vfs.ModifiedFileSet;
+import com.google.devtools.build.skyframe.SkyKey;
 
 /**
  * An interface providing the functionalities used for analysis caching serialization and
@@ -23,8 +29,19 @@ import com.google.devtools.build.lib.skyframe.serialization.ObjectCodecs;
  */
 public interface RemoteAnalysisCachingDependenciesProvider {
 
+  RemoteAnalysisCacheMode mode();
+
+  /** Value of RemoteAnalysisCachingOptions#serializedFrontierProfile. */
+  String serializedFrontierProfile();
+
   /** Returns true if the {@link PackageIdentifier} is in the set of active directories. */
   boolean withinActiveDirectories(PackageIdentifier pkg);
+
+  /**
+   * Returns the string distinguisher to invalidate SkyValues, in addition to the corresponding
+   * SkyKey.
+   */
+  FrontierNodeVersion getSkyValueVersion() throws SerializationException;
 
   /**
    * Returns the {@link ObjectCodecs} supplier for remote analysis caching.
@@ -35,4 +52,70 @@ public interface RemoteAnalysisCachingDependenciesProvider {
 
   /** Returns the {@link FingerprintValueService} implementation. */
   FingerprintValueService getFingerprintValueService();
+
+  void recordRetrievalResult(RetrievalResult retrievalResult, SkyKey key);
+
+  void recordSerializationException(SerializationException e);
+
+  void setTopLevelConfigChecksum(String checksum);
+
+  ModifiedFileSet getDiffFromEvaluatingVersion();
+
+  /** A stub dependencies provider for when analysis caching is disabled. */
+  final class DisabledDependenciesProvider implements RemoteAnalysisCachingDependenciesProvider {
+
+    public static final DisabledDependenciesProvider INSTANCE = new DisabledDependenciesProvider();
+
+    private DisabledDependenciesProvider() {}
+
+    @Override
+    public RemoteAnalysisCacheMode mode() {
+      return RemoteAnalysisCacheMode.OFF;
+    }
+
+    @Override
+    public String serializedFrontierProfile() {
+      return "";
+    }
+
+    @Override
+    public boolean withinActiveDirectories(PackageIdentifier pkg) {
+      throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public FrontierNodeVersion getSkyValueVersion() {
+      throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public ObjectCodecs getObjectCodecs() {
+      throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public FingerprintValueService getFingerprintValueService() {
+      throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void recordRetrievalResult(RetrievalResult retrievalResult, SkyKey key) {
+      throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void recordSerializationException(SerializationException e) {
+      throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void setTopLevelConfigChecksum(String topLevelConfigChecksum) {
+      throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public ModifiedFileSet getDiffFromEvaluatingVersion() {
+      throw new UnsupportedOperationException();
+    }
+  }
 }

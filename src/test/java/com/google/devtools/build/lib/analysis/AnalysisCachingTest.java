@@ -78,6 +78,7 @@ public class AnalysisCachingTest extends AnalysisCachingTestBase {
     scratch.file(
         "java/a/BUILD",
         """
+        load("@rules_java//java:defs.bzl", "java_test")
         java_test(
             name = "A",
             srcs = ["A.java"],
@@ -94,6 +95,7 @@ public class AnalysisCachingTest extends AnalysisCachingTestBase {
     scratch.file(
         "java/a/BUILD",
         """
+        load("@rules_java//java:defs.bzl", "java_test")
         java_test(
             name = "A",
             srcs = ["A.java"],
@@ -114,6 +116,7 @@ public class AnalysisCachingTest extends AnalysisCachingTestBase {
     scratch.file(
         "java/a/BUILD",
         """
+        load("@rules_java//java:defs.bzl", "java_test")
         java_test(
             name = "A",
             srcs = ["A.java"],
@@ -131,6 +134,7 @@ public class AnalysisCachingTest extends AnalysisCachingTestBase {
     scratch.file(
         "java/a/BUILD",
         """
+        load("@rules_java//java:defs.bzl", "java_test")
         java_test(
             name = "A",
             srcs = ["A.java"],
@@ -153,6 +157,7 @@ public class AnalysisCachingTest extends AnalysisCachingTestBase {
     scratch.file(
         "java/a/BUILD",
         """
+        load("@rules_java//java:defs.bzl", "java_test")
         java_test(
             name = "A",
             srcs = ["A.java"],
@@ -162,6 +167,7 @@ public class AnalysisCachingTest extends AnalysisCachingTestBase {
     scratch.file(
         "java/b/BUILD",
         """
+        load("@rules_java//java:defs.bzl", "java_library")
         java_library(
             name = "b",
             srcs = ["B.java"],
@@ -172,6 +178,7 @@ public class AnalysisCachingTest extends AnalysisCachingTestBase {
     scratch.overwriteFile(
         "java/b/BUILD",
         """
+        load("@rules_java//java:defs.bzl", "java_library")
         java_library(
             name = "b",
             srcs = ["C.java"],
@@ -247,6 +254,7 @@ public class AnalysisCachingTest extends AnalysisCachingTestBase {
     scratch.file(
         "java/a/BUILD",
         """
+        load("@rules_java//java:defs.bzl", "java_test")
         java_test(
             name = "A",
             srcs = ["A.java"],
@@ -256,6 +264,7 @@ public class AnalysisCachingTest extends AnalysisCachingTestBase {
     scratch.file(
         "java/b/BUILD",
         """
+        load("@rules_java//java:defs.bzl", "java_library")
         java_library(
             name = "b",
             srcs = ["B.java"],
@@ -266,6 +275,7 @@ public class AnalysisCachingTest extends AnalysisCachingTestBase {
     scratch.overwriteFile(
         "java/a/BUILD",
         """
+        load("@rules_java//java:defs.bzl", "java_test")
         java_test(
             name = "A",
             srcs = ["A.java"],
@@ -640,6 +650,7 @@ public class AnalysisCachingTest extends AnalysisCachingTestBase {
     scratch.file(
         "java/a/BUILD",
         """
+        load("@rules_java//java:defs.bzl", "java_test")
         java_test(
             name = "A",
             srcs = ["A.java"],
@@ -649,6 +660,7 @@ public class AnalysisCachingTest extends AnalysisCachingTestBase {
     scratch.file(
         "java/b/BUILD",
         """
+        load("@rules_java//java:defs.bzl", "java_library")
         java_library(
             name = "b",
             srcs = ["B.java"],
@@ -658,6 +670,7 @@ public class AnalysisCachingTest extends AnalysisCachingTestBase {
     scratch.file(
         "java/c/BUILD",
         """
+        load("@rules_java//java:defs.bzl", "java_library")
         java_library(
             name = "c",
             srcs = ["C.java"],
@@ -672,6 +685,7 @@ public class AnalysisCachingTest extends AnalysisCachingTestBase {
     scratch.overwriteFile(
         "java/b/BUILD",
         """
+        load("@rules_java//java:defs.bzl", "java_library")
         java_library(
             name = "b",
             srcs = ["B.java"],
@@ -694,6 +708,7 @@ public class AnalysisCachingTest extends AnalysisCachingTestBase {
     scratch.file(
         "java/a/BUILD",
         """
+        load("@rules_java//java:defs.bzl", "java_test")
         java_test(
             name = "A",
             srcs = ["A.java"],
@@ -709,6 +724,7 @@ public class AnalysisCachingTest extends AnalysisCachingTestBase {
     scratch.file(
         "java/a/BUILD",
         """
+        load("@rules_java//java:defs.bzl", "java_library")
         java_library(
             name = "x",
             srcs = ["A.java"],
@@ -735,6 +751,7 @@ public class AnalysisCachingTest extends AnalysisCachingTestBase {
     scratch.file(
         "java/a/BUILD",
         """
+        load("@rules_java//java:defs.bzl", "java_library")
         # It's important that all targets are of the same rule class, otherwise the second update
         # call might analyze more than one extra target because of potential implicit dependencies.
         java_library(
@@ -769,8 +786,18 @@ public class AnalysisCachingTest extends AnalysisCachingTestBase {
 
   @Test
   public void testExtraActions() throws Exception {
-    scratch.file("java/com/google/a/BUILD", "java_library(name='a', srcs=['A.java'])");
-    scratch.file("java/com/google/b/BUILD", "java_library(name='b', srcs=['B.java'])");
+    scratch.file(
+        "java/com/google/a/BUILD",
+        """
+        load("@rules_java//java:defs.bzl", "java_library")
+        java_library(name='a', srcs=['A.java'])
+        """);
+    scratch.file(
+        "java/com/google/b/BUILD",
+        """
+        load("@rules_java//java:defs.bzl", "java_library")
+        java_library(name='b', srcs=['B.java'])
+        """);
     scratch.file(
         "extra/BUILD",
         """
@@ -794,7 +821,12 @@ public class AnalysisCachingTest extends AnalysisCachingTestBase {
 
   @Test
   public void testExtraActionsCaching() throws Exception {
-    scratch.file("java/a/BUILD", "java_library(name='a', srcs=['A.java'])");
+    scratch.file(
+        "java/a/BUILD",
+        """
+        load("@rules_java//java:defs.bzl", "java_library")
+        java_library(name='a', srcs=['A.java'])
+        """);
     scratch.file(
         "extra/BUILD",
         """
@@ -853,6 +885,7 @@ public class AnalysisCachingTest extends AnalysisCachingTestBase {
     scratch.file(
         "java/a/BUILD",
         """
+        load("@rules_java//java:defs.bzl", "java_test")
         java_test(
             name = "A",
             srcs = ["A.java"],
@@ -865,6 +898,7 @@ public class AnalysisCachingTest extends AnalysisCachingTestBase {
     scratch.overwriteFile(
         "java/a/BUILD",
         """
+        load("@rules_java//java:defs.bzl", "java_test")
         java_test(
             name = "A",
             srcs = ["B.java"],
@@ -885,6 +919,7 @@ public class AnalysisCachingTest extends AnalysisCachingTestBase {
     scratch.file(
         "java/a/BUILD",
         """
+        load("@rules_java//java:defs.bzl", "java_test")
         java_test(
             name = "A",
             srcs = ["A.java"],
@@ -894,6 +929,7 @@ public class AnalysisCachingTest extends AnalysisCachingTestBase {
     scratch.file(
         "java/b/BUILD",
         """
+        load("@rules_java//java:defs.bzl", "java_test")
         java_test(
             name = "B",
             srcs = ["B.java"],
@@ -910,6 +946,7 @@ public class AnalysisCachingTest extends AnalysisCachingTestBase {
     scratch.overwriteFile(
         "java/b/BUILD",
         """
+        load("@rules_java//java:defs.bzl", "java_test")
         java_test(
             name = "B",
             srcs = ["C.java"],
@@ -942,6 +979,7 @@ public class AnalysisCachingTest extends AnalysisCachingTestBase {
     scratch.file(
         "java/a/BUILD",
         """
+        load("@rules_java//java:defs.bzl", "java_library")
         java_library(
             name = "x",
             srcs = ["A.java"],
@@ -1165,11 +1203,11 @@ public class AnalysisCachingTest extends AnalysisCachingTestBase {
         ImmutableMap.<String, Integer>builder()
             .put("//test:top", 1)
             .put("//test:shared", 1)
-            .build());
+            .buildOrThrow());
   }
 
   @Test
-  public void cacheClearedWhenNonAllowedHostOptionsChange() throws Exception {
+  public void cacheNotClearedForExecWhenNonExecOptionsChange() throws Exception {
     setupDiffResetTesting();
     scratch.file(
         "test/BUILD",
@@ -1187,7 +1225,46 @@ public class AnalysisCachingTest extends AnalysisCachingTestBase {
     update("//test:top");
     useConfiguration("--host_relevant=Test 2");
     update("//test:top");
-    useConfiguration("--host_relevant=Test 1");
+    // //test:shared is in the exec configuration, and --host_relevant is not part of the exec
+    // configuration. Therefore, //test:shared is not reanalyzed, even though //test:top is.
+    assertNumberOfAnalyzedConfigurationsOfTargets(
+        ImmutableMap.<String, Integer>builder()
+            .put("//test:top", 1)
+            .put("//test:shared", 0)
+            .buildOrThrow());
+  }
+
+  @Test
+  public void cacheClearedForExecWhenExecOptionsChange() throws Exception {
+    setupDiffResetTesting();
+    scratch.file(
+        "test/BUILD",
+        """
+        load(":lib.bzl", "normal_lib", "uses_irrelevant")
+
+        uses_irrelevant(
+            name = "top",
+            host_deps = [":shared"],
+        )
+
+        normal_lib(name = "shared")
+        """);
+    // --host_compilation_mode is part of the exec configuration.
+    useConfiguration("--host_compilation_mode=opt");
+    update("//test:top");
+    useConfiguration("--host_compilation_mode=dbg");
+    update("//test:top");
+
+    // Now, //test:shared is reanalyzed, because --host_compilation_mode is part of the exec
+    // configuration.
+    assertNumberOfAnalyzedConfigurationsOfTargets(
+        ImmutableMap.<String, Integer>builder()
+            .put("//test:top", 1)
+            .put("//test:shared", 1)
+            .buildOrThrow());
+
+    // Return to the original configuration and check that the cache is not cleared.
+    useConfiguration("--host_compilation_mode=opt");
     update("//test:top");
     // these targets needed to be reanalyzed even though we built them in this configuration
     // just a moment ago
@@ -1195,7 +1272,7 @@ public class AnalysisCachingTest extends AnalysisCachingTestBase {
         ImmutableMap.<String, Integer>builder()
             .put("//test:top", 1)
             .put("//test:shared", 1)
-            .build());
+            .buildOrThrow());
   }
 
   @Test
@@ -1223,7 +1300,7 @@ public class AnalysisCachingTest extends AnalysisCachingTestBase {
         ImmutableMap.<String, Integer>builder()
             .put("//test:top", 1)
             .put("//test:shared", 0)
-            .build());
+            .buildOrThrow());
     useConfiguration("--definitely_relevant=Testing", "--probably_irrelevant=Test 1");
     update("//test:top");
     // now we're back to the old configuration with no cache clears, so no work needed to be done
@@ -1231,7 +1308,7 @@ public class AnalysisCachingTest extends AnalysisCachingTestBase {
         ImmutableMap.<String, Integer>builder()
             .put("//test:top", 0)
             .put("//test:shared", 0)
-            .build());
+            .buildOrThrow());
   }
 
   @Test
@@ -1655,10 +1732,30 @@ public class AnalysisCachingTest extends AnalysisCachingTestBase {
         normal_lib(name = "top")
         """);
     useConfiguration("--definitely_relevant=old");
-    update("//test:top");
-    useConfiguration("--noallow_analysis_cache_discard", "--definitely_relevant=new");
 
+    // Set up the analysis cache
+    update("//test:top");
+
+    // Check if things work if the build options are not changed
+    useConfiguration("--noallow_analysis_cache_discard", "--definitely_relevant=old");
+    update("//test:top");
+
+    // Check if an error is raised when the build options are changed. Do it twice because
+    // had already had a bug that the second invocation erroneously worked. See
+    // https://github.com/bazelbuild/bazel/issues/23491 .
+    useConfiguration("--noallow_analysis_cache_discard", "--definitely_relevant=new");
     Throwable t = assertThrows(InvalidConfigurationException.class, () -> update("//test:top"));
     assertThat(t.getMessage().contains("analysis cache would have been discarded")).isTrue();
+
+    t = assertThrows(InvalidConfigurationException.class, () -> update("//test:top"));
+    assertThat(t.getMessage()).contains("analysis cache would have been discarded");
+
+    // Check if going back to the original configuration works.
+    useConfiguration("--noallow_analysis_cache_discard", "--definitely_relevant=old");
+    update("//test:top");
+
+    // Now check if removing --noallow_analysis_cache_discard in fact allows discarding the cache.
+    useConfiguration("--definitely_relevant=new");
+    update("//test:top");
   }
 }

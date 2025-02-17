@@ -19,6 +19,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.devtools.build.lib.actions.Artifact;
+import com.google.devtools.build.lib.analysis.AspectCollection;
 import com.google.devtools.build.lib.analysis.ConfiguredAspect;
 import com.google.devtools.build.lib.analysis.ConfiguredTarget;
 import com.google.devtools.build.lib.analysis.FileProvider;
@@ -223,7 +224,7 @@ class BuildResultPrinter {
       ProviderCollection target, TopLevelArtifactContext context) {
     var artifacts = new ArrayList<Artifact>();
     // For up-to-date targets report generated artifacts, but only if they have associated action
-    // and not middleman artifacts.
+    // and not runfiles trees.
     for (Artifact artifact :
         TopLevelArtifactHelper.getAllArtifactsToBuild(target, context)
             .getImportantArtifacts()
@@ -273,7 +274,7 @@ class BuildResultPrinter {
       ArrayList<ConfiguredTarget> skipped,
       boolean omitNothingToBuild) {
     for (ConfiguredTarget target : skipped) {
-      outErr.printErr("Target " + target.getLabel() + " was skipped\n");
+      outErr.printErr("Target " + target.getOriginalLabel() + " was skipped\n");
     }
     for (int i = 0; i < succeeded.size(); ++i) {
       ConfiguredTarget target = succeeded.get(i);
@@ -389,7 +390,7 @@ class BuildResultPrinter {
     var aspectsToPrintBuilder = ImmutableSet.<AspectKey>builder();
     var validationAspectsBuilder = ImmutableList.<AspectKey>builder();
     for (AspectKey key : keys) {
-      if (Objects.equals(key.getAspectClass().getName(), BuildRequest.VALIDATION_ASPECT_NAME)) {
+      if (Objects.equals(key.getAspectClass().getName(), AspectCollection.VALIDATION_ASPECT_NAME)) {
         validationAspectsBuilder.add(key);
       } else {
         aspectsToPrintBuilder.add(key);

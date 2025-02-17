@@ -37,6 +37,8 @@ import com.google.devtools.build.lib.analysis.AnalysisPhaseCompleteEvent;
 import com.google.devtools.build.lib.analysis.NoBuildEvent;
 import com.google.devtools.build.lib.analysis.NoBuildRequestFinishedEvent;
 import com.google.devtools.build.lib.bugreport.BugReport;
+import com.google.devtools.build.lib.bugreport.Crash;
+import com.google.devtools.build.lib.bugreport.CrashContext;
 import com.google.devtools.build.lib.buildeventstream.AnnounceBuildEventTransportsEvent;
 import com.google.devtools.build.lib.buildeventstream.BuildEventTransport;
 import com.google.devtools.build.lib.buildeventstream.BuildEventTransportClosedEvent;
@@ -98,6 +100,7 @@ public final class UiEventHandler implements EventHandler {
       DateTimeFormatter.ofPattern("(HH:mm:ss) ");
   private static final DateTimeFormatter DATE_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd");
 
+  private final boolean quiet;
   private final boolean cursorControl;
   private final Clock clock;
   private final EventBus eventBus;
@@ -110,14 +113,13 @@ public final class UiEventHandler implements EventHandler {
   private final boolean showTimestamp;
   private final OutErr outErr;
   private final ImmutableSet<EventKind> filteredEventKinds;
-  private long progressRateLimitMillis;
-  private long minimalUpdateInterval;
+  private final long progressRateLimitMillis;
+  private final long minimalUpdateInterval;
   private long lastRefreshMillis;
   private long mustRefreshAfterMillis;
   private boolean dateShown;
   private int numLinesProgressBar;
   private boolean buildRunning;
-  // Number of open build even protocol transports.
   private boolean progressBarNeedsRefresh;
   private volatile boolean shutdown;
   private final AtomicReference<Thread> updateThread;
@@ -160,9 +162,10 @@ public final class UiEventHandler implements EventHandler {
     }
   }
 
-  public UiEventHandler(
+  UiEventHandler(
       OutErr outErr,
       UiOptions options,
+      boolean quiet,
       Clock clock,
       EventBus eventBus,
       @Nullable PathFragment workspacePathFragment,
@@ -174,6 +177,7 @@ public final class UiEventHandler implements EventHandler {
         OutErr.create(
             new FullyBufferedOutputStream(outErr.getOutputStream()),
             new FullyBufferedOutputStream(outErr.getErrorStream()));
+    this.quiet = quiet;
     this.cursorControl = options.useCursorControl();
     this.terminal = new AnsiTerminal(this.outErr.getErrorStream());
     this.showProgress = options.showProgress;
@@ -422,7 +426,17 @@ public final class UiEventHandler implements EventHandler {
   }
 
   private void handleInternal(Event event) {
-    if (filteredEventKinds.contains(event.getKind())) {
+    EventKind eventKind = event.getKind();
+    if (quiet) {
+      switch (eventKind) {
+        case ERROR, FATAL, STDOUT, STDERR -> {}
+        default -> {
+          return;
+        }
+      }
+    }
+
+    if (filteredEventKinds.contains(eventKind)) {
       return;
     }
     try {
@@ -507,27 +521,15 @@ public final class UiEventHandler implements EventHandler {
 
   private void setEventKindColor(EventKind kind) throws IOException {
     switch (kind) {
-      case FATAL:
-      case ERROR:
-      case FAIL:
+      case FATAL, ERROR, FAIL -> {
         terminal.setTextColor(Color.RED);
         terminal.textBold();
-        break;
-      case WARNING:
-      case CANCELLED:
-        terminal.setTextColor(Color.MAGENTA);
-        break;
-      case INFO:
-        terminal.setTextColor(Color.GREEN);
-        break;
-      case DEBUG:
-        terminal.setTextColor(Color.YELLOW);
-        break;
-      case SUBCOMMAND:
-        terminal.setTextColor(Color.BLUE);
-        break;
-      default:
-        terminal.resetTerminal();
+      }
+      case WARNING, CANCELLED -> terminal.setTextColor(Color.MAGENTA);
+      case INFO -> terminal.setTextColor(Color.GREEN);
+      case DEBUG -> terminal.setTextColor(Color.YELLOW);
+      case SUBCOMMAND -> terminal.setTextColor(Color.BLUE);
+      default -> terminal.resetTerminal();
     }
   }
 
@@ -582,7 +584,7 @@ public final class UiEventHandler implements EventHandler {
   @Subscribe
   public synchronized void analysisComplete(AnalysisPhaseCompleteEvent event) {
     String analysisSummary = stateTracker.analysisComplete();
-    handle(Event.info(null, analysisSummary));
+    handle(Event.info(analysisSummary));
   }
 
   @Subscribe
@@ -863,11 +865,11 @@ public final class UiEventHandler implements EventHandler {
   public synchronized void buildEventTransportsAnnounced(AnnounceBuildEventTransportsEvent event) {
     stateTracker.buildEventTransportsAnnounced(event);
     if (debugAllEvents) {
-      String message = "Transports announced:";
+      StringBuilder message = new StringBuilder("Transports announced:");
       for (BuildEventTransport transport : event.transports()) {
-        message += " " + transport.name();
+        message.append(" ").append(transport.name());
       }
-      this.handle(Event.info(null, message));
+      this.handle(Event.info(message.toString()));
     }
   }
 
@@ -875,7 +877,7 @@ public final class UiEventHandler implements EventHandler {
   public void buildEventTransportClosed(BuildEventTransportClosedEvent event) {
     stateTracker.buildEventTransportClosed(event);
     if (debugAllEvents) {
-      this.handle(Event.info(null, "Transport " + event.transport().name() + " closed"));
+      this.handle(Event.info("Transport " + event.transport().name() + " closed"));
     }
 
     checkActivities();
@@ -965,7 +967,6 @@ public final class UiEventHandler implements EventHandler {
     // arise if the completion of the build is reported (shortly) before the completion of
     // the last action is reported.
     if (buildRunning && updateThread.get() == null) {
-      final UiEventHandler eventHandler = this;
       Thread threadToStart =
           new Thread(
               () -> {
@@ -976,10 +977,16 @@ public final class UiEventHandler implements EventHandler {
                         && mustRefreshAfterMillis < clock.currentTimeMillis()) {
                       progressBarNeedsRefresh = true;
                     }
-                    eventHandler.doRefresh(/*fromUpdateThread=*/ true);
+                    doRefresh(/* fromUpdateThread= */ true);
                   }
                 } catch (InterruptedException e) {
                   // Ignore
+                } catch (Throwable t) {
+                  // Do not block if a crash is already in progress. The thread that wins the crash
+                  // reporting race needs to display a FATAL exception message, which waits for this
+                  // thread to terminate in stopUpdateThread(). Blocking can lead to a deadlock.
+                  BugReport.handleCrash(
+                      Crash.from(t), CrashContext.haltOrReturnIfCrashInProgress());
                 }
               },
               "cli-update-thread");
@@ -1025,6 +1032,10 @@ public final class UiEventHandler implements EventHandler {
   }
 
   private synchronized void addProgressBar() throws IOException {
+    if (quiet) {
+      return;
+    }
+
     LineCountingAnsiTerminalWriter countingTerminalWriter =
         new LineCountingAnsiTerminalWriter(terminal);
     AnsiTerminalWriter terminalWriter = countingTerminalWriter;

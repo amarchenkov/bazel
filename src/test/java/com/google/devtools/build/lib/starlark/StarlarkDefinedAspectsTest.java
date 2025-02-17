@@ -57,9 +57,11 @@ import com.google.devtools.build.lib.server.FailureDetails.Analysis;
 import com.google.devtools.build.lib.server.FailureDetails.Analysis.Code;
 import com.google.devtools.build.lib.server.FailureDetails.FailureDetail;
 import com.google.devtools.build.lib.skyframe.AspectKeyCreator.AspectKey;
+import com.google.devtools.build.lib.skyframe.AspectKeyCreator.TopLevelAspectsKey;
 import com.google.devtools.build.lib.skyframe.BzlLoadValue;
 import com.google.devtools.build.lib.skyframe.ConfiguredTargetKey;
 import com.google.devtools.build.lib.skyframe.SkyframeExecutor;
+import com.google.devtools.build.lib.skyframe.config.BuildConfigurationKey;
 import com.google.devtools.build.lib.skyframe.serialization.testutils.RoundTripping;
 import com.google.devtools.build.lib.testutil.TestRuleClassProvider;
 import com.google.devtools.build.lib.vfs.Path;
@@ -94,7 +96,10 @@ public class StarlarkDefinedAspectsTest extends AnalysisTestCase {
            return []
         MyAspect = aspect(implementation=_impl)
         """);
-    scratch.file("test/BUILD", "java_library(name = 'xxx',)");
+    scratch.file(
+        "test/BUILD",
+        "load('@rules_java//java:defs.bzl', 'java_library')",
+        "java_library(name = 'xxx',)");
 
     AnalysisResult analysisResult =
         update(ImmutableList.of("test/aspect.bzl%MyAspect"), "//test:xxx");
@@ -113,7 +118,10 @@ public class StarlarkDefinedAspectsTest extends AnalysisTestCase {
            return foo()
         MyAspect = aspect(implementation=_impl)
         """);
-    scratch.file("test/BUILD", "java_library(name = 'xxx',)");
+    scratch.file(
+        "test/BUILD",
+        "load('@rules_java//java:defs.bzl', 'java_library')",
+        "java_library(name = 'xxx',)");
 
     AnalysisResult analysisResult =
         update(ImmutableList.of("test/aspect.bzl%MyAspect"), "//test:xxx");
@@ -140,7 +148,10 @@ public class StarlarkDefinedAspectsTest extends AnalysisTestCase {
            return [foo(), bar()]
         MyAspect = aspect(implementation=_impl)
         """);
-    scratch.file("test/BUILD", "java_library(name = 'xxx',)");
+    scratch.file(
+        "test/BUILD",
+        "load('@rules_java//java:defs.bzl', 'java_library')",
+        "java_library(name = 'xxx',)");
 
     AnalysisResult analysisResult =
         update(ImmutableList.of("test/aspect.bzl%MyAspect"), "//test:xxx");
@@ -170,7 +181,10 @@ public class StarlarkDefinedAspectsTest extends AnalysisTestCase {
            return [foo(), bar()]
         MyAspect = aspect(implementation=_impl)
         """);
-    scratch.file("test/BUILD", "java_library(name = 'xxx',)");
+    scratch.file(
+        "test/BUILD",
+        "load('@rules_java//java:defs.bzl', 'java_library')",
+        "java_library(name = 'xxx',)");
 
     AnalysisResult analysisResult =
         update(ImmutableList.of("test/aspect.bzl%MyAspect"), "//test:xxx");
@@ -207,7 +221,10 @@ public class StarlarkDefinedAspectsTest extends AnalysisTestCase {
            return []
         MyAspect = aspect(implementation=_impl)
         """);
-    scratch.file("test/BUILD", "java_library(name = 'xxx',)");
+    scratch.file(
+        "test/BUILD",
+        "load('@rules_java//java:defs.bzl', 'java_library')",
+        "java_library(name = 'xxx',)");
 
     AnalysisResult analysisResult =
         update(ImmutableList.of("//test:aspect.bzl%MyAspect"), "//test:xxx");
@@ -233,7 +250,10 @@ public class StarlarkDefinedAspectsTest extends AnalysisTestCase {
         """);
     scratch.file("local/repo/BUILD");
 
-    scratch.file("test/BUILD", "java_library(name = 'xxx',)");
+    scratch.file(
+        "test/BUILD",
+        "load('@rules_java//java:defs.bzl', 'java_library')",
+        "java_library(name = 'xxx',)");
 
     AnalysisResult analysisResult =
         update(ImmutableList.of("@local//:aspect.bzl%MyAspect"), "//test:xxx");
@@ -258,7 +278,10 @@ public class StarlarkDefinedAspectsTest extends AnalysisTestCase {
            return []
         MyAspect = aspect(implementation=_impl, fragments=['java'])
         """);
-    scratch.file("test/BUILD", "java_library(name = 'xxx',)");
+    scratch.file(
+        "test/BUILD",
+        "load('@rules_java//java:defs.bzl', 'java_library')",
+        "java_library(name = 'xxx',)");
 
     AnalysisResult analysisResult =
         update(ImmutableList.of("test/aspect.bzl%MyAspect"), "//test:xxx");
@@ -297,6 +320,7 @@ MyAspect = aspect(
     scratch.file(
         "test/BUILD",
         """
+        load("@rules_java//java:defs.bzl", "java_library")
         java_library(
              name = 'yyy',
         )
@@ -443,6 +467,7 @@ MyAspect = aspect(
     scratch.file(
         "test/BUILD",
         """
+        load("@rules_java//java:defs.bzl", "java_library")
         java_library(
              name = 'xxx',
              srcs = ['A.java'],
@@ -487,6 +512,7 @@ MyAspect = aspect(
     scratch.file(
         "test/BUILD",
         """
+        load("@rules_java//java:defs.bzl", "java_library")
         java_library(
              name = 'xxx',
              srcs = ['A.java'],
@@ -551,6 +577,7 @@ my_rule = rule(
         "test/BUILD",
         """
         load('//test:aspect.bzl', 'my_rule')
+        load("@rules_java//java:defs.bzl", "java_library")
         java_library(
              name = 'yyy',
         )
@@ -594,6 +621,7 @@ my_rule = rule(
         "test/BUILD",
         """
         load('//test:aspect.bzl', 'my_rule')
+        load("@rules_java//java:defs.bzl", "java_library")
         java_library(
              name = 'yyy',
         )
@@ -634,6 +662,7 @@ my_rule = rule(
         "test/BUILD",
         """
         load('//test:inc.bzl', 'r')
+        load("@rules_java//java:defs.bzl", "java_library")
         java_library(name = 'j')
         r(name = 'test', a = [':j'])
         """);
@@ -669,6 +698,7 @@ my_rule = rule(
         "test/BUILD",
         """
         load('//test:rule.bzl', 'my_rule')
+        load("@rules_java//java:defs.bzl", "java_library")
         java_library(
              name = 'yyy',
         )
@@ -721,6 +751,7 @@ my_rule = rule(
         "test/BUILD",
         """
         load('//test:aspect.bzl', 'my_rule')
+        load("@rules_java//java:defs.bzl", "java_library")
         java_library(
              name = 'yyy',
         )
@@ -765,6 +796,7 @@ my_rule = rule(
         "test/BUILD",
         """
         load('//test:aspect.bzl', 'my_rule')
+        load("@rules_java//java:defs.bzl", "java_library")
         java_library(
              name = 'yyy',
         )
@@ -798,6 +830,7 @@ my_rule = rule(
         "test/BUILD",
         """
         exports_files(['zzz.jar'])
+        load("@rules_java//java:defs.bzl", "java_library")
         java_library(
              name = 'xxx',
              srcs = ['A.java'],
@@ -828,6 +861,7 @@ my_rule = rule(
         "test/BUILD",
         """
         exports_files(['zzz.jar'])
+        load("@rules_java//java:defs.bzl", "java_library")
         java_library(
              name = 'xxx',
              srcs = ['A.java'],
@@ -854,7 +888,10 @@ my_rule = rule(
 
         MyAspect = aspect(implementation=_impl)
         """);
-    scratch.file("test/BUILD", "java_library(name = 'xxx',)");
+    scratch.file(
+        "test/BUILD",
+        "load('@rules_java//java:defs.bzl', 'java_library')",
+        "java_library(name = 'xxx',)");
 
     reporter.removeHandler(failFastHandler);
     try {
@@ -867,10 +904,11 @@ my_rule = rule(
     // Stack doesn't include source lines because we haven't told EvalException
     // how to read from scratch.
     assertContainsEvent(
-        "ERROR /workspace/test/BUILD:1:13: in "
+        "ERROR /workspace/test/BUILD:2:13: in "
             + "//test:aspect.bzl%MyAspect aspect on java_library rule //test:xxx: \n"
             + "Traceback (most recent call last):\n"
             + "\tFile \"/workspace/test/aspect.bzl\", line 2, column 13, in _impl\n"
+            + "\t\treturn 1 // 0\n"
             + "Error: integer division by zero");
   }
 
@@ -884,7 +922,10 @@ my_rule = rule(
 
         MyAspect = aspect(implementation=_impl)
         """);
-    scratch.file("test/BUILD", "java_library(name = 'xxx',)");
+    scratch.file(
+        "test/BUILD",
+        "load('@rules_java//java:defs.bzl', 'java_library')",
+        "java_library(name = 'xxx',)");
 
     reporter.removeHandler(failFastHandler);
     try {
@@ -910,7 +951,10 @@ my_rule = rule(
 
         MyAspect = aspect(implementation=_impl)
         """);
-    scratch.file("test/BUILD", "java_library(name = 'xxx',)");
+    scratch.file(
+        "test/BUILD",
+        "load('@rules_java//java:defs.bzl', 'java_library')",
+        "java_library(name = 'xxx',)");
 
     reporter.removeHandler(failFastHandler);
     try {
@@ -921,7 +965,7 @@ my_rule = rule(
       // expect to fail.
     }
     assertContainsEvent(
-        "ERROR /workspace/test/BUILD:1:13: in "
+        "ERROR /workspace/test/BUILD:2:13: in "
             + "//test:aspect.bzl%MyAspect aspect on java_library rule //test:xxx: \n"
             + "The following files have no generating action:\n"
             + "test/missing_in_action.txt");
@@ -1035,7 +1079,10 @@ my_rule = rule(
   @Test
   public void topLevelAspectIsNotAnAspect() throws Exception {
     scratch.file("test/aspect.bzl", "MyAspect = 4");
-    scratch.file("test/BUILD", "java_library(name = 'xxx')");
+    scratch.file(
+        "test/BUILD",
+        "load('@rules_java//java:defs.bzl', 'java_library')",
+        "java_library(name = 'xxx')");
 
     reporter.removeHandler(failFastHandler);
     try {
@@ -1053,20 +1100,20 @@ my_rule = rule(
     scratch.file(
         "test/aspect.bzl",
         """
-        def _impl(target, ctx):
-          f = ctx.actions.declare_file('f.txt')
-          ctx.actions.write(f, 'f')
-          return [OutputGroupInfo(duplicate = depset([f]))]
+        def _aspect_impl(target, ctx):
+          a = ctx.actions.declare_file('aspect.txt')
+          ctx.actions.write(a, 'f')
+          return [OutputGroupInfo(duplicate = depset([a]))]
 
-        MyAspect = aspect(implementation=_impl)
+        MyAspect = aspect(implementation=_aspect_impl)
         def _rule_impl(ctx):
-          g = ctx.actions.declare_file('g.txt')
-          ctx.actions.write(g, 'g')
-          return [OutputGroupInfo(duplicate = depset([g]))]
+          r = ctx.actions.declare_file('rule.txt')
+          ctx.actions.write(r, 'r')
+          return [OutputGroupInfo(duplicate = depset([r]))]
         my_rule = rule(_rule_impl)
-        def _noop(ctx):
-          pass
-        rbase = rule(_noop, attrs = { 'dep' : attr.label(aspects = [MyAspect]) })
+        def _rbase_impl(ctx):
+          return [DefaultInfo(files=ctx.attr.dep[OutputGroupInfo].duplicate)]
+        rbase = rule(_rbase_impl, attrs = { 'dep' : attr.label(aspects = [MyAspect]) })
         """);
     scratch.file(
         "test/BUILD",
@@ -1076,15 +1123,13 @@ my_rule = rule(
         rbase(name = 'yyy', dep = ':xxx')
         """);
 
-    reporter.removeHandler(failFastHandler);
-    try {
-      AnalysisResult result = update("//test:yyy");
-      assertThat(keepGoing()).isTrue();
-      assertThat(result.hasError()).isTrue();
-    } catch (ViewCreationFailedException e) {
-      // expect to fail.
-    }
-    assertContainsEvent("ERROR /workspace/test/BUILD:3:6: Output group duplicate provided twice");
+    AnalysisResult analysisResult = update("//test:yyy");
+    NestedSet<Artifact> filesToBuild =
+        Iterables.getOnlyElement(analysisResult.getTargetsToBuild())
+            .getProvider(FileProvider.class)
+            .getFilesToBuild();
+    assertThat(ActionsTestUtil.baseArtifactNames(filesToBuild))
+        .containsExactly("aspect.txt", "rule.txt");
   }
 
   @Test
@@ -1370,43 +1415,44 @@ my_rule = rule(
         "test/aspect.bzl",
         """
         def _a1_impl(target, ctx):
-          f = ctx.actions.declare_file(target.label.name + '_a1.txt')
-          ctx.actions.write(f, 'f')
-          return [OutputGroupInfo(a1_group = depset([f]))]
+          a1 = ctx.actions.declare_file(target.label.name + '_a1.txt')
+          ctx.actions.write(a1, 'f')
+          return [OutputGroupInfo(aspect_group = depset([a1]))]
 
         a1 = aspect(implementation=_a1_impl, attr_aspects = ['dep'])
-        def _rule_impl(ctx):
-          if not ctx.attr.dep:
-             return []
-          og = {k:ctx.attr.dep.output_groups[k] for k in ctx.attr.dep[OutputGroupInfo]}
-          return [OutputGroupInfo(**og)]
-        my_rule1 = rule(_rule_impl, attrs = { 'dep' : attr.label(aspects = [a1]) })
+
         def _a2_impl(target, ctx):
-          g = ctx.actions.declare_file(target.label.name + '_a2.txt')
-          ctx.actions.write(g, 'f')
-          return [OutputGroupInfo(a1_group = depset([g]))]
+          a2 = ctx.actions.declare_file(target.label.name + '_a2.txt')
+          ctx.actions.write(a2, 'f')
+          return [OutputGroupInfo(aspect_group = depset([a2]))]
 
         a2 = aspect(implementation=_a2_impl, attr_aspects = ['dep'])
-        my_rule2 = rule(_rule_impl, attrs = { 'dep' : attr.label(aspects = [a2]) })
+
+        def _base_impl(ctx):
+          return []
+
+        base = rule(_base_impl, attrs = {})
+
+        def _top_impl(ctx):
+          return [DefaultInfo(files=ctx.attr.dep[OutputGroupInfo].aspect_group)]
+
+        top = rule(_top_impl, attrs = { 'dep' : attr.label(aspects = [a1, a2]) })
         """);
     scratch.file(
         "test/BUILD",
         """
-        load(':aspect.bzl', 'my_rule1', 'my_rule2')
-        my_rule1(name = 'base')
-        my_rule1(name = 'xxx', dep = ':base')
-        my_rule2(name = 'yyy', dep = ':xxx')
+        load(':aspect.bzl', 'base', 'top')
+        base(name = 'base')
+        top(name = 'top', dep = ':base')
         """);
 
-    reporter.removeHandler(failFastHandler);
-    try {
-      AnalysisResult analysisResult = update("//test:yyy");
-      assertThat(analysisResult.hasError()).isTrue();
-      assertThat(keepGoing()).isTrue();
-    } catch (ViewCreationFailedException e) {
-      // expected.
-    }
-    assertContainsEvent("ERROR /workspace/test/BUILD:3:9: Output group a1_group provided twice");
+    AnalysisResult analysisResult = update("//test:top");
+    NestedSet<Artifact> filesToBuild =
+        Iterables.getOnlyElement(analysisResult.getTargetsToBuild())
+            .getProvider(FileProvider.class)
+            .getFilesToBuild();
+    assertThat(ActionsTestUtil.baseArtifactNames(filesToBuild))
+        .containsExactly("base_a1.txt", "base_a2.txt");
   }
 
   private static Iterable<String> getOutputGroupContents(
@@ -1454,7 +1500,10 @@ my_rule = rule(
   @Test
   public void topLevelAspectDoesNotExist() throws Exception {
     scratch.file("test/aspect.bzl", "");
-    scratch.file("test/BUILD", "java_library(name = 'xxx')");
+    scratch.file(
+        "test/BUILD",
+        "load('@rules_java//java:defs.bzl', 'java_library')",
+        "java_library(name = 'xxx')");
 
     reporter.removeHandler(failFastHandler);
     try {
@@ -1469,7 +1518,10 @@ my_rule = rule(
 
   @Test
   public void topLevelAspectDoesNotExist2() throws Exception {
-    scratch.file("test/BUILD", "java_library(name = 'xxx')");
+    scratch.file(
+        "test/BUILD",
+        "load('@rules_java//java:defs.bzl', 'java_library')",
+        "java_library(name = 'xxx')");
 
     reporter.removeHandler(failFastHandler);
     try {
@@ -1484,7 +1536,10 @@ my_rule = rule(
 
   @Test
   public void topLevelAspectDoesNotExistNoBuildFile() throws Exception {
-    scratch.file("test/BUILD", "java_library(name = 'xxx')");
+    scratch.file(
+        "test/BUILD",
+        "load('@rules_java//java:defs.bzl', 'java_library')",
+        "java_library(name = 'xxx')");
 
     reporter.removeHandler(failFastHandler);
     try {
@@ -1555,15 +1610,19 @@ my_rule = rule(
         """
         load('aspect.bzl', 'cfgrule', 'string_flag')
         string_flag(name = 'formation', build_setting_default = 'canyon')
-        sh_library(name = 'innocent')
+        filegroup(name = 'innocent')
         cfgrule(name = 'top', to = '//baz:baz', innocent = ':innocent')
         """);
-    scratch.file("bar/BUILD", "sh_library(name = 'bar', deps = ['//baz:baz'])");
+    scratch.file(
+        "bar/BUILD",
+        "load('//test_defs:foo_library.bzl', 'foo_library')",
+        "foo_library(name = 'bar', deps = ['//baz:baz'])");
     scratch.file(
         "baz/BUILD",
         """
+        load('//test_defs:foo_library.bzl', 'foo_library')
         load('//baz/subdir:missing.bzl', 'sym')
-        sh_library(name = 'baz')
+        foo_library(name = 'baz')
         """);
     scratch.file("baz/subdir/missing.bzl");
     reporter.removeHandler(failFastHandler);
@@ -1678,8 +1737,21 @@ my_rule = rule(
     scratch.file(
         "test/BUILD",
         """
-        load('//test:aspect.bzl', 'my_rule')
-        my_rule(name = 'xxx', my_attr = select({'//conditions:default': 'foo'}))
+        load("//test:aspect.bzl", "my_rule")
+
+        # Needed to avoid the select() being eliminated as trivial.
+        config_setting(
+            name = "config",
+            values = {"defines": "something"},
+        )
+
+        my_rule(
+            name = "xxx",
+            my_attr = select({
+                ":config": "foo",
+                "//conditions:default": "bar",
+            }),
+        )
         """);
 
     reporter.removeHandler(failFastHandler);
@@ -2255,6 +2327,7 @@ my_rule = rule(
     scratch.file(
         "test/BUILD",
         """
+        load("@rules_java//java:defs.bzl", "java_library")
         extra_action(
             name = 'xa',
             cmd = 'echo $(EXTRA_ACTION_FILE) > $(output file.xa)',
@@ -2289,6 +2362,7 @@ my_rule = rule(
     scratch.file(
         "test/BUILD",
         """
+        load("@rules_java//java:defs.bzl", "java_library")
         extra_action(
             name = 'xa',
             cmd = 'echo $(EXTRA_ACTION_FILE) > $(output file.xa)',
@@ -2338,6 +2412,7 @@ my_rule = rule(
     scratch.file(
         "test/BUILD",
         """
+        load("@rules_java//java:defs.bzl", "java_library")
         java_library(
             name = 'tool',
         )
@@ -2686,7 +2761,10 @@ r = rule(_r_impl, attrs = { 'dep' : attr.label(aspects = [a])})
         my_aspect = aspect(_impl, provides = ['foo'])
         a_dict = { 'foo' : attr.label_list(aspects = [my_aspect]) }
         """);
-    scratch.file("test/BUILD", "java_library(name = 'xxx',)");
+    scratch.file(
+        "test/BUILD",
+        "load('@rules_java//java:defs.bzl', 'java_library')",
+        "java_library(name = 'xxx',)");
 
     reporter.removeHandler(failFastHandler);
     try {
@@ -7280,8 +7358,10 @@ r = rule(_r_impl, attrs = { 'dep' : attr.label(aspects = [a])})
     scratch.file(
         "test/BUILD",
         """
-        sh_binary(name='bin', srcs=['bin.sh'])
-        sh_library(name='lib')
+        load('//test_defs:foo_binary.bzl', 'foo_binary')
+        load('//test_defs:foo_library.bzl', 'foo_library')
+        foo_binary(name='bin', srcs=['bin.sh'])
+        foo_library(name='lib')
         """);
     scratch.file(
         "test/defs.bzl",
@@ -9658,7 +9738,7 @@ r = rule(_r_impl, attrs = { 'dep' : attr.label(aspects = [a])})
         r1(name = 't2', dep = ':t3')
         r1(name = 't3')
         r1(name = 't4')
-        sh_library(name = 'tool')
+        filegroup(name = 'tool')
         """);
 
     AnalysisResult analysisResult = update(ImmutableList.of("//test:defs.bzl%a"), "//test:t1");
@@ -9688,6 +9768,212 @@ r = rule(_r_impl, attrs = { 'dep' : attr.label(aspects = [a])})
             .collect(toImmutableList());
     // aspect depends on the result of its application on the target deps if it propagates to them
     assertThat(aspectsDeps).containsExactly("//test:t2");
+  }
+
+  @Test
+  public void testTopLevelAspectNotDependsOnConfigeredTopLevelTarget() throws Exception {
+    scratch.file(
+        "test/defs.bzl",
+        """
+        def _a_impl(target, ctx):
+          return []
+        a = aspect(
+          implementation = _a_impl,
+          attr_aspects = ['dep'],
+        )
+
+        def _rule_impl(ctx):
+          pass
+        r1 = rule(
+          implementation = _rule_impl,
+          attrs = {
+            'dep': attr.label(),
+          },
+        )
+        """);
+    scratch.file(
+        "test/BUILD",
+        """
+        load('//test:defs.bzl', 'r1')
+        r1(name = 't1', dep = ':t2')
+        r1(name = 't2', dep = ':t3')
+        r1(name = 't3')
+        """);
+
+    var unused = update(ImmutableList.of("//test:defs.bzl%a"), "//test:t1");
+    var topLevelAspectsNode =
+        skyframeExecutor.getEvaluator().getInMemoryGraph().getAllNodeEntries().stream()
+            .filter(n -> n.getKey() instanceof TopLevelAspectsKey)
+            .findFirst()
+            .orElse(null);
+    assertThat(topLevelAspectsNode).isNotNull();
+
+    // top level aspect should not depend on any configured target.
+    ImmutableList<String> configuredTargetsDeps =
+        stream(Iterables.filter(topLevelAspectsNode.getDirectDeps(), ConfiguredTargetKey.class))
+            .map(k -> k.getLabel().toString())
+            .collect(toImmutableList());
+    assertThat(configuredTargetsDeps).isEmpty();
+
+    // top level aspect should not even depend on any build configuration.
+    ImmutableList<String> buildConfiguredTargetsDeps =
+        stream(Iterables.filter(topLevelAspectsNode.getDirectDeps(), BuildConfigurationKey.class))
+            .map(k -> k.getCanonicalName())
+            .collect(toImmutableList());
+    assertThat(buildConfiguredTargetsDeps).hasSize(0);
+
+    // top level aspect should depend on the result of aspect's application on the top level target.
+    ImmutableList<String> aspectsDeps =
+        stream(Iterables.filter(topLevelAspectsNode.getDirectDeps(), AspectKey.class))
+            .map(k -> k.getLabel().toString())
+            .collect(toImmutableList());
+    assertThat(aspectsDeps).containsExactly("//test:t1");
+  }
+
+  @Test
+  public void topLevelAspectRequiredProviderNotSatisfied_aspectKeyNotCreated() throws Exception {
+    scratch.file(
+        "test/defs.bzl",
+        """
+        p1 = provider()
+        def _a_impl(target, ctx):
+          return []
+        a = aspect(
+          implementation = _a_impl,
+          attr_aspects = ['dep'],
+          required_providers = [p1],
+        )
+
+        def _rule_impl(ctx):
+          pass
+        r1 = rule(
+          implementation = _rule_impl,
+          attrs = {
+            'dep': attr.label(),
+          },
+        )
+        """);
+    scratch.file(
+        "test/BUILD",
+        """
+        load('//test:defs.bzl', 'r1')
+        r1(name = 't1', dep = ':t2')
+        r1(name = 't2')
+        """);
+
+    var unused = update(ImmutableList.of("//test:defs.bzl%a"), "//test:t1");
+
+    var topLevelAspectsNode =
+        skyframeExecutor.getEvaluator().getInMemoryGraph().getAllNodeEntries().stream()
+            .filter(n -> n.getKey() instanceof AspectKey)
+            .map(n -> (AspectKey) n.getKey())
+            .collect(toImmutableList());
+
+    // no aspect key should be requested since the aspect's required provider is not satisfied.
+    assertThat(topLevelAspectsNode).isEmpty();
+  }
+
+  private void writeAspectOnAliasTestFiles() throws Exception {
+    scratch.file(
+        "test/config_setting/BUILD", "config_setting(name='defines', values={'define': 'foo=1'})");
+
+    scratch.file(
+        "test/defs.bzl",
+        """
+        p1 = provider()
+        AspectInfo = provider()
+
+        def _a_impl(target, ctx):
+          return [AspectInfo(aspect_a_result = 'target {}, p1.val = {}'.format(target.label,
+              target[p1].val))]
+
+        a = aspect(
+          implementation = _a_impl,
+          attr_aspects = ['dep'],
+          required_providers = [p1],
+        )
+
+        def _rule_impl(ctx):
+          return [p1(val = 'v1')]
+
+        rule_with_p1 = rule(
+          implementation = _rule_impl,
+          attrs = {
+            'dep': attr.label(),
+          },
+          provides = [p1],
+        )
+
+        rule_without_p1 = rule(
+          implementation = _rule_impl,
+          attrs = {
+            'dep': attr.label(),
+          },
+        )
+        """);
+
+    scratch.file(
+        "test/BUILD",
+        """
+        load('//test:defs.bzl', 'rule_with_p1', 'rule_without_p1')
+        alias(
+            name = 'alias_target',
+            actual = select({
+                              "//test/config_setting:defines": ":t1",
+                              "//conditions:default": ":t2",
+                              })
+                )
+        rule_with_p1(name = 't1')
+        rule_without_p1(name = 't2')
+        """);
+  }
+
+  @Test
+  public void topLevelAspectOnAliasTarget_requiredProviderSatisfied() throws Exception {
+    writeAspectOnAliasTestFiles();
+
+    // this will select //test:t1 as the alias's actual target.
+    useConfiguration("--define=foo=1");
+    var analysisResult = update(ImmutableList.of("//test:defs.bzl%a"), "//test:alias_target");
+
+    var topLevelAspectsNode =
+        skyframeExecutor.getEvaluator().getInMemoryGraph().getAllNodeEntries().stream()
+            .filter(n -> n.getKey() instanceof AspectKey)
+            .map(n -> (AspectKey) n.getKey())
+            .map(k -> k.getAspectName() + " on " + k.getLabel())
+            .collect(toImmutableList());
+
+    // aspect required provider is satisfied by the alias's actual target.
+    assertThat(topLevelAspectsNode)
+        .containsExactly(
+            "//test:defs.bzl%a on //test:t1", "//test:defs.bzl%a on //test:alias_target");
+
+    ImmutableMap<AspectKey, ConfiguredAspect> configuredAspects = analysisResult.getAspectsMap();
+    ConfiguredAspect aspectA = getConfiguredAspect(configuredAspects, "a");
+    assertThat(aspectA).isNotNull();
+    String aspectAResult =
+        (String)
+            getStarlarkProvider(aspectA, "//test:defs.bzl", "AspectInfo")
+                .getValue("aspect_a_result");
+    assertThat(aspectAResult).isEqualTo("target @@//test:t1, p1.val = v1");
+  }
+
+  @Test
+  public void topLevelAspectOnAliasTarget_requiredProviderNotSatisfied() throws Exception {
+    writeAspectOnAliasTestFiles();
+
+    // this will select the default //test:t2 as the alias's actual target.
+    var unused = update(ImmutableList.of("//test:defs.bzl%a"), "//test:alias_target");
+
+    var topLevelAspectsNode =
+        skyframeExecutor.getEvaluator().getInMemoryGraph().getAllNodeEntries().stream()
+            .filter(n -> n.getKey() instanceof AspectKey)
+            .map(n -> (AspectKey) n.getKey())
+            .collect(toImmutableList());
+
+    // no aspect key should be requested since the aspect's required provider is not satisfied by
+    // the alias's actual target.
+    assertThat(topLevelAspectsNode).isEmpty();
   }
 
   private ImmutableList<AspectKey> getAspectKeys(String targetLabel, String aspectLabel) {
@@ -9755,7 +10041,10 @@ r = rule(_r_impl, attrs = { 'dep' : attr.label(aspects = [a])})
            return []
         MyAspect = aspect(implementation=_impl)
         """);
-    scratch.file("test/BUILD", "java_library(name = 'xxx',)");
+    scratch.file(
+        "test/BUILD",
+        "load('@rules_java//java:defs.bzl', 'java_library')",
+        "java_library(name = 'xxx',)");
 
     // Runs a basic analysis to prime test/aspect.bzl in Skyframe.
     AnalysisResult unusedAnalysisResult =

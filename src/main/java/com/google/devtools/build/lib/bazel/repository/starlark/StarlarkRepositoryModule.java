@@ -40,7 +40,7 @@ import com.google.devtools.build.lib.packages.RuleClass.Builder.RuleClassType;
 import com.google.devtools.build.lib.packages.RuleFactory.InvalidRuleException;
 import com.google.devtools.build.lib.packages.RuleFunction;
 import com.google.devtools.build.lib.packages.StarlarkExportable;
-import com.google.devtools.build.lib.packages.TargetDefinitionContext.NameConflictException;
+import com.google.devtools.build.lib.packages.TargetRecorder.NameConflictException;
 import com.google.devtools.build.lib.packages.WorkspaceFactoryHelper;
 import com.google.devtools.build.lib.packages.semantics.BuildLanguageOptions;
 import com.google.devtools.build.lib.starlarkbuildapi.repository.RepositoryModuleApi;
@@ -81,6 +81,7 @@ public class StarlarkRepositoryModule implements RepositoryModuleApi {
     builder.setCallStack(
         callstack.subList(0, callstack.size() - 1)); // pop 'repository_rule' itself
 
+    builder.addAttribute(attr("$original_name", STRING).defaultValue("").build());
     builder.addAttribute(attr("$local", BOOLEAN).defaultValue(local).build());
     builder.addAttribute(attr("$configure", BOOLEAN).defaultValue(configure).build());
     if (thread.getSemantics().getBool(BuildLanguageOptions.EXPERIMENTAL_REPO_REMOTE_EXEC)) {
@@ -138,10 +139,11 @@ public class StarlarkRepositoryModule implements RepositoryModuleApi {
       category = DocCategory.BUILTIN,
       doc =
           """
-          A callable value that may be invoked during evaluation of the WORKSPACE file or within \
-          the implementation function of a module extension to instantiate and return a \
-          repository rule.
-          """)
+A callable value that may be invoked during evaluation of the WORKSPACE file or within \
+the implementation function of a module extension to instantiate and return a repository \
+rule. Created by \
+<a href="../globals/bzl.html#repository_rule"><code>repository_rule()</code></a>.
+""")
   public static final class RepositoryRuleFunction
       implements StarlarkCallable, StarlarkExportable, RuleFunction {
     private final RuleClass.Builder builder;
@@ -268,7 +270,6 @@ public class StarlarkRepositoryModule implements RepositoryModuleApi {
         return WorkspaceFactoryHelper.createAndAddRepositoryRule(
             pkgBuilder,
             ruleClass,
-            /* bindRuleClass= */ null,
             WorkspaceFactoryHelper.getFinalKwargs(kwargs),
             thread.getCallStack());
       } catch (InvalidRuleException | NameConflictException | LabelSyntaxException e) {

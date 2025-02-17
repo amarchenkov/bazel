@@ -37,9 +37,9 @@ public final class ServerBuilder {
       ImmutableList.builder();
   private final BuildEventArtifactUploaderFactoryMap.Builder buildEventArtifactUploaderFactories =
       new BuildEventArtifactUploaderFactoryMap.Builder();
-  private final ImmutableMap.Builder<String, AuthHeadersProvider> authHeadersProvidersMap =
-      ImmutableMap.builder();
   private RepositoryRemoteExecutorFactory repositoryRemoteExecutorFactory;
+  private final InstrumentationOutputFactory.Builder instrumentationOutputFactoryBuilder =
+      new InstrumentationOutputFactory.Builder();
 
   @VisibleForTesting
   public ServerBuilder() {}
@@ -171,18 +171,18 @@ public final class ServerBuilder {
   }
 
   /**
-   * Register a provider of authentication headers that blaze modules can use. See {@link
-   * AuthHeadersProvider} for more details.
+   * Returns the builder for {@link InstrumentationOutputFactory} so that suppliers for different
+   * types of {@link InstrumentationOutputBuilder} can be added.
    */
-  @CanIgnoreReturnValue
-  public ServerBuilder addAuthHeadersProvider(
-      String name, AuthHeadersProvider authHeadersProvider) {
-    authHeadersProvidersMap.put(name, authHeadersProvider);
-    return this;
+  public InstrumentationOutputFactory.Builder getInstrumentationOutputFactoryBuilder() {
+    return instrumentationOutputFactoryBuilder;
   }
 
-  /** Returns a map of all registered {@link AuthHeadersProvider}s. */
-  public ImmutableMap<String, AuthHeadersProvider> getAuthHeadersProvidersMap() {
-    return authHeadersProvidersMap.buildOrThrow();
+  /**
+   * Creates the {@link InstrumentationOutputFactory} so that user can choose to create the {@link
+   * InstrumentationOutputBuilder} object.
+   */
+  public InstrumentationOutputFactory createInstrumentationOutputFactory() {
+    return instrumentationOutputFactoryBuilder.build();
   }
 }

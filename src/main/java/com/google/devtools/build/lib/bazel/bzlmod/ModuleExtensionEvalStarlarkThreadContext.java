@@ -71,6 +71,7 @@ public final class ModuleExtensionEvalStarlarkThreadContext extends StarlarkThre
   private final String repoPrefix;
   private final PackageIdentifier basePackageId;
   private final RepositoryMapping baseRepoMapping;
+  private final ImmutableMap<String, RepositoryName> repoOverrides;
   private final BlazeDirectories directories;
   private final ExtendedEventHandler eventHandler;
   private final Map<String, RepoRuleCall> deferredRepos = new LinkedHashMap<>();
@@ -80,6 +81,7 @@ public final class ModuleExtensionEvalStarlarkThreadContext extends StarlarkThre
       String repoPrefix,
       PackageIdentifier basePackageId,
       RepositoryMapping baseRepoMapping,
+      ImmutableMap<String, RepositoryName> repoOverrides,
       RepositoryMapping mainRepoMapping,
       BlazeDirectories directories,
       ExtendedEventHandler eventHandler) {
@@ -88,6 +90,7 @@ public final class ModuleExtensionEvalStarlarkThreadContext extends StarlarkThre
     this.repoPrefix = repoPrefix;
     this.basePackageId = basePackageId;
     this.baseRepoMapping = baseRepoMapping;
+    this.repoOverrides = repoOverrides;
     this.directories = directories;
     this.eventHandler = eventHandler;
   }
@@ -133,13 +136,15 @@ public final class ModuleExtensionEvalStarlarkThreadContext extends StarlarkThre
     // Make it possible to refer to extension repos in the label attributes of another extension
     // repo. Wrapping a label in Label(...) ensures that it is evaluated with respect to the
     // containing module's repo mapping instead.
-    var extensionRepos =
+    ImmutableMap.Builder<String, RepositoryName> entries = ImmutableMap.builder();
+    entries.putAll(baseRepoMapping.entries());
+    entries.putAll(
         Maps.asMap(
             deferredRepos.keySet(),
-            apparentName -> RepositoryName.createUnvalidated(repoPrefix + apparentName));
+            apparentName -> RepositoryName.createUnvalidated(repoPrefix + apparentName)));
+    entries.putAll(repoOverrides);
     RepositoryMapping fullRepoMapping =
-        RepositoryMapping.create(extensionRepos, baseRepoMapping.ownerRepo())
-            .withAdditionalMappings(baseRepoMapping);
+        RepositoryMapping.create(entries.buildKeepingLast(), baseRepoMapping.ownerRepo());
     // LINT.ThenChange(//src/main/java/com/google/devtools/build/lib/bazel/bzlmod/ModuleExtensionRepoMappingEntriesFunction.java)
 
     ImmutableMap.Builder<String, RepoSpec> repoSpecs = ImmutableMap.builder();
@@ -164,23 +169,18 @@ public final class ModuleExtensionEvalStarlarkThreadContext extends StarlarkThre
             Maps.filterKeys(
                 Maps.transformEntries(repoRuleCall.kwargs, (k, v) -> rule.getAttr(k)),
                 k -> !k.equals("name"));
-        String bzlFile =
-            repoRuleCall
-                .ruleClass
-                .getRuleDefinitionEnvironmentLabel()
-                .getUnambiguousCanonicalForm();
         var attributesValue = AttributeValues.create(attributes);
         AttributeValues.validateAttrs(
             attributesValue,
-            String.format("in the extension '%s'", extensionId.asTargetString()),
+            String.format("in the extension '%s'", extensionId),
             String.format("%s '%s'", rule.getRuleClass(), name));
-        RepoSpec repoSpec =
-            RepoSpec.builder()
-                .setBzlFile(bzlFile)
-                .setRuleClassName(repoRuleCall.ruleClass.getName())
-                .setAttributes(attributesValue)
-                .build();
-        repoSpecs.put(name, repoSpec);
+        repoSpecs.put(
+            name,
+            new RepoSpec(
+                new RepoRuleId(
+                    repoRuleCall.ruleClass.getRuleDefinitionEnvironmentLabel(),
+                    repoRuleCall.ruleClass.getName()),
+                attributesValue));
       } catch (EvalException e) {
         throw e.withCallStack(repoRuleCall.callStack);
       } catch (InvalidRuleException | NoSuchPackageException e) {

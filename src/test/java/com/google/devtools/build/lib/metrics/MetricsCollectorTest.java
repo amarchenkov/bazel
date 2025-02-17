@@ -16,8 +16,6 @@ package com.google.devtools.build.lib.metrics;
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.extensions.proto.ProtoTruth.assertThat;
-import static com.google.devtools.build.lib.testutil.TestConstants.PLATFORM_LABEL;
-import static com.google.devtools.build.lib.testutil.TestConstants.PLATFORM_LABEL_ALIAS;
 import static org.junit.Assert.assertThrows;
 
 import com.google.common.collect.ImmutableList;
@@ -181,6 +179,54 @@ public class MetricsCollectorTest extends BuildIntegrationTestCase {
   }
 
   @Test
+  public void testAspectActionsCreatedNotOverCountedForAlias() throws Exception {
+    write(
+        "pkg/BUILD",
+        """
+        load(":defs.bzl", "my_rule")
+        my_rule(name = "foo", dep = "dep_alias_alias")
+        alias(name = "dep_alias_alias", actual = ":dep_alias")
+        alias(name = "dep_alias", actual = ":dep")
+        my_rule(name = "dep")
+        """);
+    write(
+        "pkg/defs.bzl",
+        """
+        def _aspect_impl(target, ctx):
+            f = ctx.actions.declare_file(target.label.name + ".out")
+            ctx.actions.run_shell(
+                outputs = [f],
+                command = "touch $@",
+                mnemonic = "MyAspectAction",
+            )
+            return [OutputGroupInfo(my_out = depset([f]))]
+
+        my_aspect = aspect(implementation = _aspect_impl)
+
+        def _impl(ctx):
+            pass
+
+        my_rule = rule(
+            implementation = _impl,
+            attrs = {
+                "dep": attr.label(aspects = [my_aspect]),
+            },
+        )
+        """);
+    buildTarget("//pkg:foo");
+
+    BuildMetrics buildMetrics = buildMetricsEventListener.event.getBuildMetrics();
+    List<ActionData> actionData = buildMetrics.getActionSummary().getActionDataList();
+    ImmutableList<ActionData> aspectActions =
+        actionData.stream()
+            .filter(a -> a.getMnemonic().equals("MyAspectAction"))
+            .collect(toImmutableList());
+    assertThat(aspectActions).hasSize(1);
+    ActionData aspectAction = aspectActions.get(0);
+    assertThat(aspectAction.getActionsCreated()).isEqualTo(1);
+  }
+
+  @Test
   public void buildGraphAndArtifactMetrics() throws Exception {
     write(
         "a/BUILD",
@@ -243,7 +289,7 @@ public class MetricsCollectorTest extends BuildIntegrationTestCase {
         .isEqualTo(
             BuildGraphMetrics.newBuilder()
                 .setOutputFileConfiguredTargetCount(1)
-                .setOtherConfiguredTargetCount(PLATFORM_LABEL_ALIAS.equals(PLATFORM_LABEL) ? 1 : 2)
+                .setOtherConfiguredTargetCount(1)
                 .build());
     int outputArtifactCount = buildGraphMetrics.getOutputArtifactCount();
     assertThat(outputArtifactCount).isGreaterThan(0);
@@ -336,7 +382,7 @@ public class MetricsCollectorTest extends BuildIntegrationTestCase {
                 .setActionCountNotIncludingAspects(2 + actionCount)
                 .setInputFileConfiguredTargetCount(4)
                 .setOutputArtifactCount(2 + outputArtifactCount)
-                .setOtherConfiguredTargetCount(PLATFORM_LABEL_ALIAS.equals(PLATFORM_LABEL) ? 0 : 1)
+                .setOtherConfiguredTargetCount(0)
                 // ArtifactNestedSet node for stale nested set is still in graph, since it is
                 // technically still valid (even though nobody wants that nested set anymore).
                 .setPostInvocationSkyframeNodeCount(newGraphSize + 1)
@@ -368,7 +414,7 @@ public class MetricsCollectorTest extends BuildIntegrationTestCase {
                 .setActionCountNotIncludingAspects(2 + actionCount)
                 .setInputFileConfiguredTargetCount(4)
                 .setOutputArtifactCount(2 + outputArtifactCount)
-                .setOtherConfiguredTargetCount(PLATFORM_LABEL_ALIAS.equals(PLATFORM_LABEL) ? 0 : 1)
+                .setOtherConfiguredTargetCount(0)
                 .setPostInvocationSkyframeNodeCount(newGraphSize + 1)
                 .build());
     assertThat(buildMetricsEventListener.event.getBuildMetrics().getArtifactMetrics())
@@ -799,9 +845,8 @@ public class MetricsCollectorTest extends BuildIntegrationTestCase {
     addOptions("--experimental_merged_skyframe_analysis_execution");
     BuildGraphMetrics expected =
         BuildGraphMetrics.newBuilder()
-            .setActionLookupValueCount(PLATFORM_LABEL_ALIAS.equals(PLATFORM_LABEL) ? 8 : 9)
-            .setActionLookupValueCountNotIncludingAspects(
-                PLATFORM_LABEL_ALIAS.equals(PLATFORM_LABEL) ? 8 : 9)
+            .setActionLookupValueCount(8)
+            .setActionLookupValueCountNotIncludingAspects(8)
             .setActionCount(2)
             .setActionCountNotIncludingAspects(2)
             .setInputFileConfiguredTargetCount(1)

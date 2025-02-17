@@ -333,7 +333,7 @@ function expect_log_n() {
     local message=${3:-"Expected regexp '$pattern' not found exactly $expectednum times"}
     local count=$(grep -sc -- "$pattern" $TEST_log)
     (( count == expectednum )) && return 0
-    fail "$message"
+    fail "$message (found $count times instead)"
     return 1
 }
 
@@ -477,7 +477,7 @@ function assert_contains() {
     local message=${3:-"Expected regexp '$pattern' not found in '$file'"}
     grep -sq -- "$pattern" "$file" && return 0
 
-    fail "$message" $(__copy_to_undeclared_outputs "$2")
+    fail "$message" $(__copy_to_undeclared_outputs "$file")
     return 1
 }
 
@@ -497,7 +497,7 @@ function assert_not_contains() {
       return 1
     fi
 
-    fail "$message" $(__copy_to_undeclared_outputs "$2")
+    fail "$message" $(__copy_to_undeclared_outputs "$file")
     return 1
 }
 
@@ -515,7 +515,33 @@ function assert_contains_n() {
     fi
     (( count == expectednum )) && return 0
 
-    fail "$message" $(__copy_to_undeclared_outputs "$2")
+    fail "$message" $(__copy_to_undeclared_outputs "$file")
+    return 1
+}
+
+# Usage: assert_exists <file> [error-message]
+# Asserts that the file exists.
+function assert_exists() {
+    local file=$1
+    local message=${2:-"Expected '$file' to exist"}
+    if [[ -f "$file" ]]; then
+        return 0
+    fi
+
+    fail "$message"
+    return 1
+}
+
+# Usage: assert_not_exists <file> [error-message]
+# Asserts that the file does not exist.
+function assert_not_exists() {
+    local file=$1
+    local message=${2:-"Expected '$file' to not exist"}
+    if ! [[ -f "$file" ]]; then
+        return 0
+    fi
+
+    fail "$message"
     return 1
 }
 
@@ -530,7 +556,7 @@ function assert_empty_file() {
         return 0
     fi
 
-    fail "$message" $(__copy_to_undeclared_outputs "$1")
+    fail "$message" $(__copy_to_undeclared_outputs "$file")
     return 1
 }
 
@@ -545,7 +571,7 @@ function assert_nonempty_file() {
         return 0
     fi
 
-    fail "$message" $(__copy_to_undeclared_outputs "$1")
+    fail "$message" $(__copy_to_undeclared_outputs "$file")
     return 1
 }
 

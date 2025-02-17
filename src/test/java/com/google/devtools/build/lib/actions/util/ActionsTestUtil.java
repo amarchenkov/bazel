@@ -57,8 +57,8 @@ import com.google.devtools.build.lib.actions.BuildConfigurationEvent;
 import com.google.devtools.build.lib.actions.DiscoveredModulesPruner;
 import com.google.devtools.build.lib.actions.Executor;
 import com.google.devtools.build.lib.actions.FileArtifactValue;
+import com.google.devtools.build.lib.actions.FilesetOutputTree;
 import com.google.devtools.build.lib.actions.InputMetadataProvider;
-import com.google.devtools.build.lib.actions.MiddlemanType;
 import com.google.devtools.build.lib.actions.PackageRootResolver;
 import com.google.devtools.build.lib.actions.RunfilesArtifactValue;
 import com.google.devtools.build.lib.actions.RunfilesTree;
@@ -70,6 +70,7 @@ import com.google.devtools.build.lib.actions.cache.VirtualActionInput;
 import com.google.devtools.build.lib.analysis.actions.CustomCommandLine;
 import com.google.devtools.build.lib.analysis.actions.SpawnActionTemplate;
 import com.google.devtools.build.lib.analysis.configuredtargets.RuleConfiguredTarget;
+import com.google.devtools.build.lib.analysis.platform.PlatformInfo;
 import com.google.devtools.build.lib.buildeventstream.BuildEventStreamProtos;
 import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.cmdline.RepositoryName;
@@ -88,7 +89,6 @@ import com.google.devtools.build.lib.util.FileType;
 import com.google.devtools.build.lib.util.Fingerprint;
 import com.google.devtools.build.lib.util.io.FileOutErr;
 import com.google.devtools.build.lib.vfs.DigestHashFunction;
-import com.google.devtools.build.lib.vfs.FileStatus;
 import com.google.devtools.build.lib.vfs.Path;
 import com.google.devtools.build.lib.vfs.PathFragment;
 import com.google.devtools.build.lib.vfs.Root;
@@ -97,7 +97,6 @@ import com.google.devtools.build.lib.vfs.inmemoryfs.InMemoryFileSystem;
 import com.google.devtools.build.skyframe.SkyFunction.Environment;
 import com.google.devtools.build.skyframe.SkyFunctionName;
 import com.google.errorprone.annotations.CanIgnoreReturnValue;
-import com.google.protobuf.ByteString;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.util.ArrayDeque;
@@ -241,7 +240,7 @@ public final class ActionsTestUtil {
     return ActionExecutionValue.createFromOutputMetadataStore(
         artifactData,
         treeArtifactData,
-        /* outputSymlinks= */ ImmutableList.of(),
+        FilesetOutputTree.EMPTY,
         /* discoveredModules= */ NestedSetBuilder.emptySet(Order.STABLE_ORDER));
   }
 
@@ -263,6 +262,11 @@ public final class ActionsTestUtil {
     return root.isSourceRoot()
         ? new Artifact.SourceArtifact(root, execPath, ArtifactOwner.NULL_OWNER)
         : DerivedArtifact.create(root, execPath, NULL_ARTIFACT_OWNER);
+  }
+
+  public static SpecialArtifact createRunfilesArtifact(ArtifactRoot root, String execPath) {
+    return SpecialArtifact.create(
+        root, PathFragment.create(execPath), NULL_ARTIFACT_OWNER, SpecialArtifactType.RUNFILES);
   }
 
   public static SpecialArtifact createTreeArtifactWithGeneratingAction(
@@ -314,13 +318,6 @@ public final class ActionsTestUtil {
   /** Creates a {@link VirtualActionInput} with given string as contents and provided path. */
   public static VirtualActionInput createVirtualActionInput(PathFragment path, String contents) {
     return new VirtualActionInput() {
-      @Override
-      public ByteString getBytes() throws IOException {
-        ByteString.Output out = ByteString.newOutput();
-        writeTo(out);
-        return out.toByteString();
-      }
-
       @Override
       public String getExecPathString() {
         return path.getPathString();
@@ -385,7 +382,7 @@ public final class ActionsTestUtil {
               BuildEventStreamProtos.BuildEventId.getDefaultInstance(),
               BuildEventStreamProtos.BuildEvent.getDefaultInstance()),
           /* isToolConfiguration= */ false,
-          /* executionPlatform= */ null,
+          /* executionPlatform= */ PlatformInfo.EMPTY_PLATFORM_INFO,
           /* aspectDescriptors= */ ImmutableList.of(),
           /* execProperties= */ ImmutableMap.of());
 
@@ -448,40 +445,25 @@ public final class ActionsTestUtil {
   }
 
   /**
-   * A mocked action containing the inputs and outputs of the action and determines whether or not
-   * the action is a middleman. Used for tests that do not need to execute the action.
+   * A mocked action containing the inputs and outputs of the action. Used for tests that do not
+   * need to execute the action.
    */
   public static class MockAction extends AbstractAction {
-
-    private final boolean middleman;
     private final boolean isShareable;
 
     public MockAction(Iterable<Artifact> inputs, ImmutableSet<Artifact> outputs) {
-      this(inputs, outputs, /*middleman=*/ false, /*isShareable=*/ true);
-    }
-
-    public MockAction(
-        Iterable<Artifact> inputs, ImmutableSet<Artifact> outputs, boolean middleman) {
-      this(inputs, outputs, middleman, /*isShareable*/ true);
+      this(inputs, outputs, /* isShareable= */ true);
     }
 
     public MockAction(
         Iterable<Artifact> inputs,
         ImmutableSet<Artifact> outputs,
-        boolean middleman,
         boolean isShareable) {
       super(
           NULL_ACTION_OWNER,
           NestedSetBuilder.<Artifact>stableOrder().addAll(inputs).build(),
           outputs);
-      this.middleman = middleman;
       this.isShareable = isShareable;
-    }
-
-    @Override
-    public MiddlemanType getActionType() {
-      // RUNFILES_MIDDLEMAN is chosen arbitrarily among the middleman types.
-      return middleman ? MiddlemanType.RUNFILES_MIDDLEMAN : super.getActionType();
     }
 
     @Override
@@ -925,7 +907,7 @@ public final class ActionsTestUtil {
   public static class FakeInputMetadataHandlerBase
       implements InputMetadataProvider, OutputMetadataStore {
     @Override
-    public FileArtifactValue getInputMetadata(ActionInput input) throws IOException {
+    public FileArtifactValue getInputMetadataChecked(ActionInput input) throws IOException {
       throw new UnsupportedOperationException();
     }
 
@@ -952,24 +934,8 @@ public final class ActionsTestUtil {
     }
 
     @Override
-    public void setDigestForVirtualArtifact(Artifact artifact, byte[] digest) {
-      throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public ImmutableSet<TreeFileArtifact> getTreeArtifactChildren(SpecialArtifact treeArtifact) {
-      throw new UnsupportedOperationException();
-    }
-
-    @Override
     public TreeArtifactValue getTreeArtifactValue(SpecialArtifact treeArtifact)
         throws IOException, InterruptedException {
-      throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public FileArtifactValue constructMetadataForDigest(
-        Artifact output, FileStatus statNoFollow, byte[] digest) {
       throw new UnsupportedOperationException();
     }
 

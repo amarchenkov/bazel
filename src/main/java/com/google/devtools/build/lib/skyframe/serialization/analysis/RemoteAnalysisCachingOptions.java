@@ -13,11 +13,13 @@
 // limitations under the License.
 package com.google.devtools.build.lib.skyframe.serialization.analysis;
 
+import com.google.devtools.common.options.Converters.DurationConverter;
 import com.google.devtools.common.options.EnumConverter;
 import com.google.devtools.common.options.Option;
 import com.google.devtools.common.options.OptionDocumentationCategory;
 import com.google.devtools.common.options.OptionEffectTag;
 import com.google.devtools.common.options.OptionsBase;
+import java.time.Duration;
 
 /** Options for caching analysis results remotely. */
 public class RemoteAnalysisCachingOptions extends OptionsBase {
@@ -45,14 +47,21 @@ public class RemoteAnalysisCachingOptions extends OptionsBase {
     UPLOAD,
 
     /**
-     * Fetches and deserializes the Skyframe analysis nodes during the build.
-     *
-     * <p>TODO: b/358347258 - implement.
+     * Dumps the manifest of SkyKeys computed in the frontier and the active set. This mode does not
+     * serialize and upload the keys.
      */
+    DUMP_UPLOAD_MANIFEST_ONLY,
+
+    /** Fetches and deserializes the Skyframe analysis nodes during the build. */
     DOWNLOAD,
 
     /** Disabled. */
-    OFF
+    OFF;
+
+    /** Returns true if the selected mode needs to connect to a backend. */
+    public boolean requiresBackendConnectivity() {
+      return this == DOWNLOAD || this == UPLOAD;
+    }
   }
 
   /** Enum converter for {@link RemoteAnalysisCacheMode}. */
@@ -75,7 +84,16 @@ public class RemoteAnalysisCachingOptions extends OptionsBase {
       name = "experimental_remote_analysis_cache_concurrency",
       documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
       effectTags = {OptionEffectTag.BAZEL_INTERNAL_CONFIGURATION},
-      defaultValue = "16",
+      defaultValue = "4",
       help = "Target concurrency for remote analysis caching RPCs.")
   public int concurrency;
+
+  @Option(
+      name = "experimental_remote_analysis_cache_deadline",
+      documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
+      effectTags = {OptionEffectTag.BAZEL_INTERNAL_CONFIGURATION},
+      defaultValue = "120s",
+      converter = DurationConverter.class,
+      help = "Deadline to use for remote analysis cache operations.")
+  public Duration deadline;
 }

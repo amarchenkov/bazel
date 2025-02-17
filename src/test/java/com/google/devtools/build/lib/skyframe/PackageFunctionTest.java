@@ -25,7 +25,6 @@ import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.google.common.base.Predicates;
 import com.google.common.collect.HashMultiset;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
@@ -234,7 +233,7 @@ public class PackageFunctionTest extends BuildViewTestCase {
 
   @Test
   public void testInvalidPackage() throws Exception {
-    scratch.file("pkg/BUILD", "sh_library(name='foo', srcs=['foo.sh'])");
+    scratch.file("pkg/BUILD", "filegroup(name='foo', srcs=['foo.sh'])");
     scratch.file("pkg/foo.sh");
 
     doAnswer(
@@ -281,7 +280,7 @@ public class PackageFunctionTest extends BuildViewTestCase {
 
   @Test
   public void testSkyframeExecutorClearedPackagesResultsInReload() throws Exception {
-    scratch.file("pkg/BUILD", "sh_library(name='foo', srcs=['foo.sh'])");
+    scratch.file("pkg/BUILD", "filegroup(name='foo', srcs=['foo.sh'])");
     scratch.file("pkg/foo.sh");
 
     invalidatePackages();
@@ -391,7 +390,7 @@ public class PackageFunctionTest extends BuildViewTestCase {
     scratch.file(
         "foo/BUILD",
         """
-        sh_library(
+        filegroup(
             name = "foo",
             srcs = glob(["bar/**/baz.sh"]),
         )
@@ -428,7 +427,7 @@ public class PackageFunctionTest extends BuildViewTestCase {
   @Test
   public void testDiscrepancyBetweenGlobbingErrors() throws Exception {
     Path fooBuildFile =
-        scratch.file("foo/BUILD", "sh_library(name = 'foo', srcs = glob(['bar/*.sh']))");
+        scratch.file("foo/BUILD", "filegroup(name = 'foo', srcs = glob(['bar/*.sh']))");
     Path fooDir = fooBuildFile.getParentDirectory();
     Path barDir = fooDir.getRelative("bar");
     scratch.file("foo/bar/baz.sh");
@@ -458,7 +457,7 @@ public class PackageFunctionTest extends BuildViewTestCase {
   @SuppressWarnings("unchecked") // Cast of srcs attribute to Iterable<Label>.
   @Test
   public void testGlobOrderStable() throws Exception {
-    scratch.file("foo/BUILD", "sh_library(name = 'foo', srcs = glob(['**/*.txt']))");
+    scratch.file("foo/BUILD", "filegroup(name = 'foo', srcs = glob(['**/*.txt']))");
     scratch.file("foo/b.txt");
     scratch.file("foo/c/c.txt");
     preparePackageLoading(rootDirectory);
@@ -486,14 +485,14 @@ public class PackageFunctionTest extends BuildViewTestCase {
 
   @Test
   public void testGlobOrderStableWithNonSkyframeAndSkyframeComponents() throws Exception {
-    scratch.file("foo/BUILD", "sh_library(name = 'foo', srcs = glob(['*.txt']))");
+    scratch.file("foo/BUILD", "filegroup(name = 'foo', srcs = glob(['*.txt']))");
     scratch.file("foo/b.txt");
     scratch.file("foo/a.config");
     preparePackageLoading(rootDirectory);
     SkyKey skyKey = PackageIdentifier.createInMainRepo("foo");
     assertSrcs(validPackageWithoutErrors(skyKey), "foo", "//foo:b.txt");
     scratch.overwriteFile(
-        "foo/BUILD", "sh_library(name = 'foo', srcs = glob(['*.txt', '*.config']))");
+        "foo/BUILD", "filegroup(name = 'foo', srcs = glob(['*.txt', '*.config']))");
     getSkyframeExecutor()
         .invalidateFilesUnderPathForTesting(
             reporter,
@@ -501,7 +500,7 @@ public class PackageFunctionTest extends BuildViewTestCase {
             Root.fromPath(rootDirectory));
     assertSrcs(validPackageWithoutErrors(skyKey), "foo", "//foo:a.config", "//foo:b.txt");
     scratch.overwriteFile(
-        "foo/BUILD", "sh_library(name = 'foo', srcs = glob(['*.txt', '*.config'])) # comment");
+        "foo/BUILD", "filegroup(name = 'foo', srcs = glob(['*.txt', '*.config'])) # comment");
     getSkyframeExecutor()
         .invalidateFilesUnderPathForTesting(
             reporter,
@@ -560,17 +559,17 @@ public class PackageFunctionTest extends BuildViewTestCase {
     scratch.file(
         "foo/BUILD",
         """
-        sh_library(
+        filegroup(
             name = "foo",
             srcs = glob(["*.sh"]),
         )
 
-        sh_library(
+        filegroup(
             name = "bar",
             srcs = glob(["link.sh"]),
         )
 
-        sh_library(
+        filegroup(
             name = "baz",
             srcs = glob(["subdir_link/*.txt"]),
         )
@@ -589,17 +588,17 @@ public class PackageFunctionTest extends BuildViewTestCase {
     scratch.overwriteFile(
         "foo/BUILD",
         """
-        sh_library(
+        filegroup(
             name = "foo",
             srcs = glob(["*.sh"]),
         )  #comment
 
-        sh_library(
+        filegroup(
             name = "bar",
             srcs = glob(["link.sh"]),
         )
 
-        sh_library(
+        filegroup(
             name = "baz",
             srcs = glob(["subdir_link/*.txt"]),
         )
@@ -636,7 +635,7 @@ public class PackageFunctionTest extends BuildViewTestCase {
     scratch.file(
         "foo/BUILD",
         """
-        sh_library(
+        filegroup(
             name = "foo",
             srcs = glob(
                 ["*.sh"],
@@ -644,7 +643,7 @@ public class PackageFunctionTest extends BuildViewTestCase {
             ),
         )
 
-        sh_library(
+        filegroup(
             name = "bar",
             srcs = glob(
                 [
@@ -672,7 +671,7 @@ public class PackageFunctionTest extends BuildViewTestCase {
     scratch.file(
         "foo/BUILD",
         """
-        sh_library(
+        filegroup(
             name = "foo",
             srcs = glob(
                 [
@@ -683,7 +682,7 @@ public class PackageFunctionTest extends BuildViewTestCase {
             ),
         )
 
-        sh_library(
+        filegroup(
             name = "bar",
             srcs = glob(
                 [
@@ -834,7 +833,7 @@ public class PackageFunctionTest extends BuildViewTestCase {
   public void testIOErrorLookingForSubpackageForLabelIsHandled() throws Exception {
     scratch.file(
         "foo/BUILD", //
-        "sh_library(name = 'foo', srcs = ['bar/baz.sh'])");
+        "filegroup(name = 'foo', srcs = ['bar/baz.sh'])");
     Path barBuildFile = scratch.file("foo/bar/BUILD");
     fs.stubStatError(barBuildFile, new IOException("nope"));
 
@@ -983,27 +982,6 @@ public class PackageFunctionTest extends BuildViewTestCase {
         "visibility() can only be used during .bzl initialization (top-level evaluation)");
   }
 
-  @Test
-  public void testBadWorkspaceFile() throws Exception {
-    setBuildLanguageOptions("--enable_workspace");
-    Path workspacePath = scratch.overwriteFile("WORKSPACE", "junk");
-    SkyKey skyKey = PackageIdentifier.createInMainRepo("external");
-    getSkyframeExecutor()
-        .invalidate(
-            Predicates.equalTo(
-                FileStateValue.key(
-                    RootedPath.toRootedPath(
-                        Root.fromPath(workspacePath.getParentDirectory()),
-                        PathFragment.create(workspacePath.getBaseName())))));
-
-    reporter.removeHandler(failFastHandler);
-    EvaluationResult<PackageValue> result =
-        SkyframeExecutorTestUtils.evaluate(
-            getSkyframeExecutor(), skyKey, /*keepGoing=*/ false, reporter);
-    assertThat(result.hasError()).isFalse();
-    assertThat(result.get(skyKey).getPackage().containsErrors()).isTrue();
-  }
-
   // Regression test for the two ugly consequences of a bug where GlobFunction incorrectly matched
   // dangling symlinks.
   @Test
@@ -1065,7 +1043,7 @@ public class PackageFunctionTest extends BuildViewTestCase {
   public void testRecursiveGlobNeverMatchesPackageDirectory() throws Exception {
     scratch.file(
         "foo/BUILD",
-        "[sh_library(name = x + '-matched') for x in glob(['**'], exclude_directories = 0)]");
+        "[filegroup(name = x + '-matched') for x in glob(['**'], exclude_directories = 0)]");
     scratch.file("foo/bar");
 
     preparePackageLoading(rootDirectory);
@@ -1079,7 +1057,7 @@ public class PackageFunctionTest extends BuildViewTestCase {
     scratch.overwriteFile(
         "foo/BUILD",
         """
-        [sh_library(name = x + "-matched") for x in glob(
+        [filegroup(name = x + "-matched") for x in glob(
             ["**"],
             exclude_directories = 0,
         )]

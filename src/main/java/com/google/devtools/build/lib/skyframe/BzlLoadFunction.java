@@ -53,6 +53,7 @@ import com.google.devtools.build.lib.skyframe.StarlarkBuiltinsFunction.BuiltinsF
 import com.google.devtools.build.lib.util.DetailedExitCode;
 import com.google.devtools.build.lib.util.Fingerprint;
 import com.google.devtools.build.lib.util.Pair;
+import com.google.devtools.build.lib.vfs.DetailedIOException;
 import com.google.devtools.build.lib.vfs.PathFragment;
 import com.google.devtools.build.lib.vfs.Root;
 import com.google.devtools.build.skyframe.RecordingSkyFunctionEnvironment;
@@ -610,7 +611,7 @@ public class BzlLoadFunction implements SkyFunction {
       }
       return StarlarkBuiltinsValue.createEmpty(starlarkSemantics);
     }
-    AutoloadSymbols autoloadSymbols = PrecomputedValue.AUTOLOAD_SYMBOLS.get(env);
+    AutoloadSymbols autoloadSymbols = AutoloadSymbols.AUTOLOAD_SYMBOLS.get(env);
     if (autoloadSymbols == null) {
       return null;
     }
@@ -881,7 +882,7 @@ public class BzlLoadFunction implements SkyFunction {
     // including the label and a reified copy of the load DAG.
     BazelModuleContext bazelModuleContext =
         BazelModuleContext.create(
-            label,
+            key,
             repoMapping,
             prog.getFilename(),
             ImmutableList.copyOf(loadMap.values()),
@@ -979,7 +980,7 @@ public class BzlLoadFunction implements SkyFunction {
       if (rootModuleMappingValue == null) {
         return null;
       }
-      return pureWorkspaceMapping.composeWith(rootModuleMappingValue.getRepositoryMapping());
+      return pureWorkspaceMapping.composeWith(rootModuleMappingValue.repositoryMapping());
     }
 
     if (key instanceof BzlLoadValue.KeyForBzlmod) {
@@ -1002,7 +1003,7 @@ public class BzlLoadFunction implements SkyFunction {
         if (repositoryMappingValue == null) {
           return null;
         }
-        return repositoryMappingValue.getRepositoryMapping();
+        return repositoryMappingValue.repositoryMapping();
       }
     }
 
@@ -1013,7 +1014,7 @@ public class BzlLoadFunction implements SkyFunction {
     if (repositoryMappingValue == null) {
       return null;
     }
-    return repositoryMappingValue.getRepositoryMapping();
+    return repositoryMappingValue.repositoryMapping();
   }
 
   @Nullable
@@ -1039,7 +1040,7 @@ public class BzlLoadFunction implements SkyFunction {
     if (mainRepositoryMappingValue == null) {
       return null;
     }
-    return mainRepositoryMappingValue.getRepositoryMapping();
+    return mainRepositoryMappingValue.repositoryMapping();
   }
 
   /**
@@ -1631,13 +1632,22 @@ public class BzlLoadFunction implements SkyFunction {
           errorMessage, detailedExitCode, cause, Transience.PERSISTENT);
     }
 
-    static BzlLoadFailedException errorReadingBzl(
-        PathFragment file, BzlCompileFunction.FailedIOException cause) {
-      String errorMessage =
-          String.format(
-              "Encountered error while reading extension file '%s': %s", file, cause.getMessage());
-      return new BzlLoadFailedException(errorMessage, Code.IO_ERROR, cause, cause.getTransience());
+  static BzlLoadFailedException errorReadingBzl(
+      PathFragment file, BzlCompileFunction.FailedIOException cause) {
+    String errorMessage =
+        String.format(
+            "Encountered error while reading extension file '%s': %s", file, cause.getMessage());
+
+    if (cause.getCause() instanceof DetailedIOException detailedException) {
+      return new BzlLoadFailedException(
+          errorMessage,
+          detailedException.getDetailedExitCode(),
+          detailedException,
+          detailedException.getTransience());
     }
+
+    return new BzlLoadFailedException(errorMessage, Code.IO_ERROR, cause, cause.getTransience());
+  }
 
     static BzlLoadFailedException noBuildFile(Label file, @Nullable String reason) {
       if (reason != null) {

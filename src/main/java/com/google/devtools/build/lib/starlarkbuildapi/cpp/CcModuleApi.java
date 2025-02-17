@@ -234,6 +234,18 @@ public interface CcModuleApi<
             named = true,
             defaultValue = "[]"),
         @Param(
+            name = "conly_flags",
+            doc = "Additional list of compilation options for C compiles.",
+            positional = false,
+            named = true,
+            defaultValue = "[]"),
+        @Param(
+            name = "cxx_flags",
+            doc = "Additional list of compilation options for C++ compiles.",
+            positional = false,
+            named = true,
+            defaultValue = "[]"),
+        @Param(
             name = "compilation_contexts",
             doc = "Headers from dependencies used for compilation.",
             positional = false,
@@ -395,6 +407,8 @@ public interface CcModuleApi<
       String includePrefix,
       String stripIncludePrefix,
       Sequence<?> userCompileFlags, // <String> expected
+      Sequence<?> conlyFlags, // <String> expected
+      Sequence<?> cxxFlags, // <String> expected
       Sequence<?> ccCompilationContexts, // <CcCompilationContext> expected
       Object implementationCcCompilationContextsObject,
       String name,
@@ -1657,6 +1671,12 @@ public interface CcModuleApi<
             named = true,
             defaultValue = "unbound"),
         @Param(
+            name = "exported_dependent_cc_compilation_contexts",
+            documented = false,
+            positional = false,
+            named = true,
+            defaultValue = "unbound"),
+        @Param(
             name = "non_code_inputs",
             documented = false,
             positional = false,
@@ -1728,13 +1748,14 @@ public interface CcModuleApi<
       Sequence<?> directTextualHdrs,
       Sequence<?> directPublicHdrs,
       Sequence<?> directPrivateHdrs,
-      Object purpose,
+      Object unused3,
       Object moduleMap,
-      Object actionFactoryForMiddlemanOwnerAndConfiguration,
-      Object labelForMiddlemanNameObject,
+      Object unused1,
+      Object unused2,
       Object externalIncludes,
       Object virtualToOriginalHeaders,
       Sequence<?> dependentCcCompilationContexts,
+      Sequence<?> exportedDependentCcCompilationContexts,
       Sequence<?> nonCodeInputs,
       Sequence<?> looseHdrsDirs,
       String headersCheckingMode,

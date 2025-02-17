@@ -26,20 +26,17 @@ import com.google.devtools.build.lib.util.RegexFilter;
 import com.google.devtools.common.options.Converter;
 import com.google.devtools.common.options.Converters;
 import com.google.devtools.common.options.Converters.BooleanConverter;
+import com.google.devtools.common.options.Converters.CommaSeparatedOptionSetConverter;
 import com.google.devtools.common.options.EnumConverter;
 import com.google.devtools.common.options.Option;
-import com.google.devtools.common.options.OptionDefinition;
 import com.google.devtools.common.options.OptionDocumentationCategory;
 import com.google.devtools.common.options.OptionEffectTag;
 import com.google.devtools.common.options.OptionMetadataTag;
-import com.google.devtools.common.options.OptionsParser;
 import com.google.devtools.common.options.OptionsParsingException;
 import com.google.devtools.common.options.TriState;
-import java.util.AbstractMap.SimpleEntry;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeSet;
@@ -62,8 +59,6 @@ import java.util.TreeSet;
  * string.
  */
 public class CoreOptions extends FragmentOptions implements Cloneable {
-  public static final OptionDefinition CPU =
-      OptionsParser.getOptionDefinitionByName(CoreOptions.class, "cpu");
 
   @Option(
       name = "scl_config",
@@ -101,6 +96,7 @@ public class CoreOptions extends FragmentOptions implements Cloneable {
       name = "experimental_propagate_custom_flag",
       defaultValue = "null",
       allowMultiple = true,
+      converter = CoreOptionConverters.CustomFlagConverter.class,
       documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
       effectTags = {OptionEffectTag.AFFECTS_OUTPUTS},
       metadataTags = {OptionMetadataTag.EXPERIMENTAL},
@@ -188,6 +184,16 @@ public class CoreOptions extends FragmentOptions implements Cloneable {
               + " In case of multiple values for a variable, the last one wins.")
   public List<Map.Entry<String, String>> commandLineBuildVariables;
 
+  // TODO: blaze-configurability-team - Remove this when --cpu is fully deprecated.
+  @Option(
+      name = "allowed_cpu_values",
+      defaultValue = "",
+      converter = CommaSeparatedOptionSetConverter.class,
+      documentationCategory = OptionDocumentationCategory.OUTPUT_PARAMETERS,
+      effectTags = {OptionEffectTag.CHANGES_INPUTS, OptionEffectTag.AFFECTS_OUTPUTS},
+      help = "Allowed values for the --cpu flag.")
+  public ImmutableList<String> allowedCpuValues;
+
   @Option(
       name = "cpu",
       defaultValue = "",
@@ -246,6 +252,7 @@ public class CoreOptions extends FragmentOptions implements Cloneable {
       defaultValue = "false",
       documentationCategory = OptionDocumentationCategory.EXECUTION_STRATEGY,
       effectTags = {OptionEffectTag.EXECUTION},
+      metadataTags = {OptionMetadataTag.EXPERIMENTAL},
       help =
           "If this option is enabled, filesets will treat all output artifacts as regular files. "
               + "They will not traverse directories or be sensitive to symlinks.")
@@ -412,24 +419,6 @@ public class CoreOptions extends FragmentOptions implements Cloneable {
       help = "Specifies a suffix to be added to the configuration directory.")
   public String platformSuffix;
 
-  // TODO(bazel-team): The test environment is actually computed in BlazeRuntime and this option
-  // is not read anywhere else. Thus, it should be in a different options class, preferably one
-  // specific to the "test" command or maybe in its own configuration fragment.
-  @Option(
-      name = "test_env",
-      converter = Converters.OptionalAssignmentConverter.class,
-      allowMultiple = true,
-      defaultValue = "null",
-      documentationCategory = OptionDocumentationCategory.TESTING,
-      effectTags = {OptionEffectTag.TEST_RUNNER},
-      help =
-          "Specifies additional environment variables to be injected into the test runner "
-              + "environment. Variables can be either specified by name, in which case its value "
-              + "will be read from the Bazel client environment, or by the name=value pair. "
-              + "This option can be used multiple times to specify several variables. "
-              + "Used only by the 'bazel test' command.")
-  public List<Map.Entry<String, String>> testEnvironment;
-
   // TODO(bazel-team): The set of available variables from the client environment for actions
   // is computed independently in CommandEnvironment to inject a more restricted client
   // environment to skyframe.
@@ -481,6 +470,7 @@ public class CoreOptions extends FragmentOptions implements Cloneable {
       name = "experimental_collect_code_coverage_for_generated_files",
       defaultValue = "false",
       documentationCategory = OptionDocumentationCategory.OUTPUT_PARAMETERS,
+      metadataTags = {OptionMetadataTag.EXPERIMENTAL},
       effectTags = {OptionEffectTag.AFFECTS_OUTPUTS},
       help =
           "If specified, Bazel will also generate collect coverage information for generated"
@@ -572,12 +562,9 @@ public class CoreOptions extends FragmentOptions implements Cloneable {
   @Option(
       name = "check_licenses",
       defaultValue = "false",
-      documentationCategory = OptionDocumentationCategory.INPUT_STRICTNESS,
+      documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
       effectTags = {OptionEffectTag.BUILD_FILE_SEMANTICS},
-      help =
-          "Check that licensing constraints imposed by dependent packages "
-              + "do not conflict with distribution modes of the targets being built. "
-              + "By default, licenses are not checked.")
+      help = "Deprecated in favor of --config=check_licenses.")
   public boolean checkLicenses;
 
   @Option(
@@ -933,6 +920,7 @@ public class CoreOptions extends FragmentOptions implements Cloneable {
       defaultValue = "false",
       documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
       effectTags = {OptionEffectTag.LOADING_AND_ANALYSIS},
+      metadataTags = {OptionMetadataTag.EXPERIMENTAL},
       help =
           "When set, select functions with no matching clause will return an empty value, instead"
               + " of failing. This is to help use cquery diagnose failures in select.")
@@ -973,20 +961,6 @@ public class CoreOptions extends FragmentOptions implements Cloneable {
   public ImmutableMap<String, String> getNormalizedCommandLineBuildVariables() {
     return sortEntries(normalizeEntries(commandLineBuildVariables)).stream()
         .collect(toImmutableMap(Map.Entry::getKey, Map.Entry::getValue));
-  }
-
-  // Normalizes list of map entries by keeping only the last entry for each key.
-  private static List<Map.Entry<String, String>> normalizeEntries(
-      List<Map.Entry<String, String>> entries) {
-    LinkedHashMap<String, String> normalizedEntries = new LinkedHashMap<>();
-    for (Map.Entry<String, String> entry : entries) {
-      normalizedEntries.put(entry.getKey(), entry.getValue());
-    }
-    // If we made no changes, return the same instance we got to reduce churn.
-    if (normalizedEntries.size() == entries.size()) {
-      return entries;
-    }
-    return normalizedEntries.entrySet().stream().map(SimpleEntry::new).collect(toImmutableList());
   }
 
   // Sort the map entries by key.
@@ -1038,6 +1012,7 @@ public class CoreOptions extends FragmentOptions implements Cloneable {
   @Override
   public CoreOptions getNormalized() {
     CoreOptions result = (CoreOptions) clone();
+    result.allowedCpuValues = dedupAndSort(allowedCpuValues);
     result.commandLineBuildVariables = sortEntries(normalizeEntries(commandLineBuildVariables));
 
     // Normalize features.
@@ -1045,7 +1020,6 @@ public class CoreOptions extends FragmentOptions implements Cloneable {
 
     result.actionEnvironment = normalizeEntries(actionEnvironment);
     result.hostActionEnvironment = normalizeEntries(hostActionEnvironment);
-    result.testEnvironment = normalizeEntries(testEnvironment);
     result.commandLineFlagAliases = sortEntries(normalizeEntries(commandLineFlagAliases));
 
     return result;

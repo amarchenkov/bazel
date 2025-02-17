@@ -47,7 +47,7 @@ public class CppOptions extends FragmentOptions {
       } else if (!input.equals("no")) { // "no" is another special case that disables all modes.
         CompilationMode.Converter modeConverter = new CompilationMode.Converter();
         for (String mode : Splitter.on(',').split(input)) {
-          modes.add(modeConverter.convert(mode, /*conversionContext=*/ null));
+          modes.add(modeConverter.convert(mode, /* conversionContext= */ null));
         }
       }
       return modes.build().asList();
@@ -606,17 +606,6 @@ public class CppOptions extends FragmentOptions {
               + "except bar.o.")
   public List<PerLabelOptions> perFileLtoBackendOpts;
 
-  /**
-   * The value of "--crosstool_top" to use for building tools.
-   *
-   * <p>We want to make sure this stays bound to the top-level configuration when not explicitly set
-   * (as opposed to a configuration that comes out of a transition). Otherwise we risk using the
-   * wrong crosstool (i.e., trying to build tools with an Android-specific crosstool).
-   *
-   * <p>To accomplish this, we initialize this to null and, if it isn't explicitly set, use {@link
-   * #getNormalized} to rewrite it to {@link #crosstoolTop}. Blaze always evaluates top-level
-   * configurations first, so they'll trigger this. But no followup transitions can.
-   */
   @Option(
       name = "host_crosstool_top",
       defaultValue = "null",
@@ -909,17 +898,6 @@ public class CppOptions extends FragmentOptions {
   public boolean disableNoCopts;
 
   @Option(
-      name = "incompatible_enable_cc_test_feature",
-      defaultValue = "false",
-      documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
-      effectTags = {OptionEffectTag.ACTION_COMMAND_LINES},
-      metadataTags = {OptionMetadataTag.INCOMPATIBLE_CHANGE},
-      help =
-          "When enabled, it switches Crosstool to use feature 'is_cc_test' rather than"
-              + " the link-time build variable of the same name.")
-  public boolean enableCcTestFeature;
-
-  @Option(
       name = "apple_generate_dsym",
       defaultValue = "false",
       documentationCategory = OptionDocumentationCategory.OUTPUT_SELECTION,
@@ -962,6 +940,7 @@ public class CppOptions extends FragmentOptions {
       defaultValue = "false",
       documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
       effectTags = {OptionEffectTag.AFFECTS_OUTPUTS, OptionEffectTag.LOADING_AND_ANALYSIS},
+      metadataTags = {OptionMetadataTag.EXPERIMENTAL},
       help = "If true, coverage for clang will generate an LCOV report.")
   public boolean generateLlvmLcov;
 
@@ -974,9 +953,12 @@ public class CppOptions extends FragmentOptions {
       help = "If enabled, give distinguishing mnemonic to header processing actions")
   public boolean useCppCompileHeaderMnemonic;
 
+  // TODO: When moving this flag to the graveyard, also delete
+  // tools/cpp/osx_cc_wrapper.sh.tpl and make tools/cpp/linux_cc_wrapper.sh.tpl
+  // the generic wrapper for header parsing on all Unix platforms.
   @Option(
       name = "incompatible_macos_set_install_name",
-      defaultValue = "false",
+      defaultValue = "true",
       documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
       effectTags = {OptionEffectTag.LOADING_AND_ANALYSIS},
       metadataTags = {OptionMetadataTag.INCOMPATIBLE_CHANGE},
@@ -1005,6 +987,7 @@ public class CppOptions extends FragmentOptions {
         OptionEffectTag.EXECUTION,
         OptionEffectTag.CHANGES_INPUTS
       },
+      metadataTags = {OptionMetadataTag.EXPERIMENTAL},
       help =
           "Whether to narrow inputs to C/C++ compilation by parsing #include lines from input"
               + " files. This can improve performance and incrementality by decreasing the size of"
@@ -1094,6 +1077,17 @@ public class CppOptions extends FragmentOptions {
           "If enabled, a Starlark version of cc_test can be used which will use platform-based"
               + " toolchain() resolution to choose a test runner.")
   public boolean experimentalPlatformCcTest;
+
+  @Option(
+      name = "experimental_starlark_linking",
+      defaultValue = "false",
+      documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
+      effectTags = {
+        OptionEffectTag.LOADING_AND_ANALYSIS,
+      },
+      metadataTags = {OptionMetadataTag.EXPERIMENTAL},
+      help = "If enabled, a Starlark version of linking is used.")
+  public boolean experimentalStarlarkLinking;
 
   /** See {@link #targetLibcTopLabel} documentation. * */
   @Override

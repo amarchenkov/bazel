@@ -480,17 +480,17 @@ public class StarlarkIntegrationTest extends BuildViewTestCase {
                 "Traceback (most recent call last):",
                 "\tFile \"/workspace/test/starlark/extension.bzl\", line 6, column 6, in"
                     + " custom_rule_impl",
-                // "\t\tfoo()",
+                "\t\tfoo()",
                 "\tFile \"/workspace/test/starlark/extension.bzl\", line 9, column 6, in foo",
-                // "\t\tbar(2, 4)",
+                "\t\tbar(2, 4)",
                 "\tFile \"/workspace/test/starlark/extension.bzl\", line 11, column 8, in bar",
-                // "\t\tfirst(x, y, z)",
+                "\t\tfirst(x, y, z)",
                 "\tFile \"/workspace/test/starlark/functions.bzl\", line 2, column 9, in first",
-                // "\t\tsecond(a, b)",
+                "\t\tsecond(a, b)",
                 "\tFile \"/workspace/test/starlark/functions.bzl\", line 5, column 8, in second",
-                // "\t\tthird(\"legal\")",
+                "\t\tthird('legal')",
                 "\tFile \"/workspace/test/starlark/functions.bzl\", line 7, column 12, in third",
-                // ...
+                "\t\t" + expr.stripLeading(),
                 errorMessage);
     scratch.file(
         "test/starlark/extension.bzl",
@@ -503,9 +503,9 @@ public class StarlarkIntegrationTest extends BuildViewTestCase {
           foo()
           return [MyInfo(provider_key = ftb)]
         def foo():
-          bar(2,4)
+          bar(2, 4)
         def bar(x,y,z=1):
-          first(x,y, z)
+          first(x, y, z)
         custom_rule = rule(implementation = custom_rule_impl,
           attrs = {'attr1': attr.label_list(mandatory=True, allow_files=True)})
         """);
@@ -710,7 +710,7 @@ public class StarlarkIntegrationTest extends BuildViewTestCase {
         """
         def custom_rule_impl(ctx):
           rf = ctx.runfiles()
-          return struct(runfiles = rf, default_runfiles = rf)
+          return DefaultInfo(runfiles = rf, default_runfiles = rf)
 
         custom_rule = rule(implementation = custom_rule_impl)
         """);
@@ -752,7 +752,7 @@ public class StarlarkIntegrationTest extends BuildViewTestCase {
     scratch.file(
         "pkg/BUILD",
         """
-        sh_binary(name = 'tryme',
+        filegroup(name = 'tryme',
                   srcs = [':tryme.sh'],
                   visibility = ['//visibility:public'],
         )
@@ -835,6 +835,7 @@ public class StarlarkIntegrationTest extends BuildViewTestCase {
     scratch.file(
         "test/starlark/BUILD",
         """
+        load("@rules_java//java:defs.bzl", "java_binary")
         load('//test/starlark:extension.bzl', 'custom_rule')
 
         custom_rule(name = 'cr')
@@ -906,10 +907,11 @@ public class StarlarkIntegrationTest extends BuildViewTestCase {
     scratch.file(
         "test/starlark/BUILD",
         """
+        load('//test_defs:foo_binary.bzl', 'foo_binary')
         load('//test/starlark:extension.bzl', 'custom_rule')
 
         custom_rule(name = 'cr')
-        sh_binary(name = 'binary', data = [':cr'], srcs = ['script.sh'])
+        foo_binary(name = 'binary', data = [':cr'], srcs = ['script.sh'])
         """);
 
     useConfiguration("--incompatible_always_include_files_in_data");
@@ -947,6 +949,7 @@ public class StarlarkIntegrationTest extends BuildViewTestCase {
     scratch.file(
         "test/starlark/BUILD",
         """
+        load("@rules_java//java:defs.bzl", "java_library")
         load('//test/starlark:extension.bzl', 'custom_rule')
 
         java_library(name='jl', srcs = [':A.java'])
@@ -984,6 +987,7 @@ public class StarlarkIntegrationTest extends BuildViewTestCase {
     scratch.file(
         "test/starlark/BUILD",
         """
+        load("@rules_java//java:defs.bzl", "java_library")
         load('//test/starlark:extension.bzl', 'custom_rule')
 
         java_library(name='jl', srcs = [':A.java'])
@@ -1022,6 +1026,7 @@ public class StarlarkIntegrationTest extends BuildViewTestCase {
     scratch.file(
         "test/starlark/BUILD",
         """
+        load("@rules_java//java:defs.bzl", "java_library")
         load('//test/starlark:extension.bzl', 'custom_rule')
 
         java_library(name='jl', srcs = [':A.java'])
@@ -1718,7 +1723,7 @@ public class StarlarkIntegrationTest extends BuildViewTestCase {
         def _top_level_rule_impl(ctx):
           print('My Dep Providers:', ctx.attr.my_dep)
 
-        def _dep_rule_impl(name):
+        def _dep_rule_impl(ctx):
           providers = [
               FooInfo(),
               BarInfo(),
@@ -2570,7 +2575,7 @@ public class StarlarkIntegrationTest extends BuildViewTestCase {
     scratch.file(
         "pkg/BUILD",
         """
-        sh_binary(name = 'tryme',
+        filegroup(name = 'tryme',
                   srcs = [':tryme.sh'],
                   visibility = ['//visibility:public'],
         )
@@ -2664,6 +2669,7 @@ public class StarlarkIntegrationTest extends BuildViewTestCase {
     scratch.file(
         "test/starlark/BUILD",
         """
+        load("@rules_java//java:defs.bzl", "java_library")
         load('//test/starlark:extension.bzl',  'my_rule')
         java_library(name = 'dep', srcs = ['a.java'], restricted_to = ['//buildenv/foo:other'])
         my_rule(name='my', deps = [':dep'])
@@ -3563,7 +3569,7 @@ public class StarlarkIntegrationTest extends BuildViewTestCase {
         "test/starlark/extension.bzl",
         """
         def custom_rule_impl(ctx):
-          return struct()
+          return struct() # intentional
 
         custom_rule = rule(implementation = custom_rule_impl)
         """);
@@ -3597,7 +3603,7 @@ public class StarlarkIntegrationTest extends BuildViewTestCase {
           print(ctx.attr.dep.my_info)
         def _dep_rule_impl(ctx):
           my_info = MyProvider(foo = 'bar')
-          return struct(my_info = my_info, providers = [my_info])
+          return [my_info]
         my_rule = rule(
           implementation = _my_rule_impl,
           attrs = {
@@ -3639,7 +3645,7 @@ public class StarlarkIntegrationTest extends BuildViewTestCase {
           print(ctx.attr.dep.actions)
         def _dep_rule_impl(ctx):
           my_info = MyProvider(foo = 'bar')
-          return struct(my_info = my_info, providers = [my_info])
+          return [my_info]
         my_rule = rule(
           implementation = _my_rule_impl,
           attrs = {
@@ -3673,7 +3679,7 @@ public class StarlarkIntegrationTest extends BuildViewTestCase {
           print(ctx.attr.dep.my_info)
         def _dep_rule_impl(ctx):
           my_info = MyProvider(foo = 'bar')
-          return struct(my_info = my_info, providers = [my_info])
+          return struct(my_info = my_info, providers = [my_info])  # intentional
         my_rule = rule(
           implementation = _my_rule_impl,
           attrs = {
@@ -3733,7 +3739,7 @@ public class StarlarkIntegrationTest extends BuildViewTestCase {
           ctx.actions.run_shell(outputs=[exe], command='touch exe')
           runfile = ctx.actions.declare_file('rrr')
           ctx.actions.run_shell(outputs=[runfile], command='touch rrr')
-          return struct(executable = exe, default_runfiles = ctx.runfiles(files = [runfile]))
+          return DefaultInfo(executable = exe, default_runfiles = ctx.runfiles(files = [runfile]))
         my_rule = rule(implementation = _my_rule_impl, executable = True)
         """);
     scratch.file(
@@ -4404,7 +4410,7 @@ public class StarlarkIntegrationTest extends BuildViewTestCase {
         """
         def _impl(target, ctx):
            print('This aspect does nothing')
-           return struct()
+           return []
         MyAspect = aspect(implementation=_impl)
         """);
 

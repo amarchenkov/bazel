@@ -49,6 +49,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BiConsumer;
 import java.util.function.Supplier;
 import java.util.zip.GZIPOutputStream;
 import javax.annotation.Nullable;
@@ -227,6 +228,35 @@ public final class Profiler {
                   ? ThreadMetadata.CRITICAL_PATH_THREAD_ID
                   : threadId);
       jsonWriter.endObject();
+
+      countActions();
+    }
+
+    private void countActions() {
+      long endTimeNanos = startTimeNanos + durationNanos;
+      if (instance.countAction(type)) {
+        TimeSeries actionCountTimeSeries = instance.actionCountTimeSeriesRef.get();
+        if (actionCountTimeSeries != null) {
+          actionCountTimeSeries.addRange(
+              Duration.ofNanos(startTimeNanos), Duration.ofNanos(endTimeNanos));
+        }
+      }
+
+      if (type == ProfilerTask.ACTION_CHECK) {
+        TimeSeries actionCacheCountTimeSeries = instance.actionCacheCountTimeSeriesRef.get();
+        if (actionCacheCountTimeSeries != null) {
+          actionCacheCountTimeSeries.addRange(
+              Duration.ofNanos(startTimeNanos), Duration.ofNanos(endTimeNanos));
+        }
+      }
+
+      if (type == ProfilerTask.LOCAL_ACTION_COUNTS) {
+        TimeSeries localActionCountTimeSeries = instance.localActionCountTimeSeriesRef.get();
+        if (localActionCountTimeSeries != null) {
+          localActionCountTimeSeries.addRange(
+              Duration.ofNanos(startTimeNanos), Duration.ofNanos(endTimeNanos));
+        }
+      }
     }
   }
 
@@ -523,39 +553,85 @@ public final class Profiler {
   }
 
   private void collectActionCounts() {
-    Duration endTime = Duration.ofNanos(clock.nanoTime());
-    int len = (int) endTime.minus(actionCountStartTime).dividedBy(ACTION_COUNT_BUCKET_DURATION) + 1;
-    Map<ProfilerTask, double[]> counterSeriesMap = new LinkedHashMap<>();
-    TimeSeries actionCountTimeSeries = actionCountTimeSeriesRef.get();
-    if (actionCountTimeSeries != null) {
-      double[] actionCountValues = actionCountTimeSeries.toDoubleArray(len);
-      actionCountTimeSeriesRef.set(null);
-      counterSeriesMap.put(ProfilerTask.ACTION_COUNTS, actionCountValues);
-    }
-    TimeSeries actionCacheCountTimeSeries = actionCacheCountTimeSeriesRef.get();
-    if (actionCacheCountTimeSeries != null) {
-      double[] actionCacheCountValues = actionCacheCountTimeSeries.toDoubleArray(len);
-      actionCacheCountTimeSeriesRef.set(null);
-      counterSeriesMap.put(ProfilerTask.ACTION_CACHE_COUNTS, actionCacheCountValues);
-    }
-    if (!counterSeriesMap.isEmpty()) {
-      instance.logCounters(counterSeriesMap, actionCountStartTime, ACTION_COUNT_BUCKET_DURATION);
-    }
+    long threadId = Thread.currentThread().getId();
+    var traceData =
+        new TraceData() {
+          @Override
+          public void writeTraceData(JsonWriter jsonWriter, long profileStartTimeNanos)
+              throws IOException {
+            Duration endTime = Duration.ofNanos(clock.nanoTime());
+            int len =
+                (int) endTime.minus(actionCountStartTime).dividedBy(ACTION_COUNT_BUCKET_DURATION)
+                    + 1;
+            Map<CounterSeriesTask, double[]> counterSeriesMap = new LinkedHashMap<>();
+            TimeSeries actionCountTimeSeries = actionCountTimeSeriesRef.get();
+            if (actionCountTimeSeries != null) {
+              double[] actionCountValues = actionCountTimeSeries.toDoubleArray(len);
+              actionCountTimeSeriesRef.set(null);
+              counterSeriesMap.put(
+                  new CounterSeriesTask("action count", "action", /* color= */ null),
+                  actionCountValues);
+            }
+            TimeSeries actionCacheCountTimeSeries = actionCacheCountTimeSeriesRef.get();
+            if (actionCacheCountTimeSeries != null) {
+              double[] actionCacheCountValues = actionCacheCountTimeSeries.toDoubleArray(len);
+              actionCacheCountTimeSeriesRef.set(null);
+              counterSeriesMap.put(
+                  new CounterSeriesTask(
+                      "action cache count", "local action cache", /* color= */ null),
+                  actionCacheCountValues);
+            }
+            if (!counterSeriesMap.isEmpty()) {
+              logCounters(
+                  jsonWriter,
+                  profileStartTimeNanos,
+                  counterSeriesMap,
+                  actionCountStartTime,
+                  ACTION_COUNT_BUCKET_DURATION);
+            }
 
-    Map<ProfilerTask, double[]> localCounterSeriesMap = new LinkedHashMap<>();
-    TimeSeries localActionCountTimeSeries = localActionCountTimeSeriesRef.get();
-    if (localActionCountTimeSeries != null) {
-      double[] localActionCountValues = localActionCountTimeSeries.toDoubleArray(len);
-      localActionCountTimeSeriesRef.set(null);
-      localCounterSeriesMap.put(ProfilerTask.LOCAL_ACTION_COUNTS, localActionCountValues);
-    }
-    if (hasNonZeroValues(localCounterSeriesMap)) {
-      instance.logCounters(
-          localCounterSeriesMap, actionCountStartTime, ACTION_COUNT_BUCKET_DURATION);
+            Map<CounterSeriesTask, double[]> localCounterSeriesMap = new LinkedHashMap<>();
+            TimeSeries localActionCountTimeSeries = localActionCountTimeSeriesRef.get();
+            if (localActionCountTimeSeries != null) {
+              double[] localActionCountValues = localActionCountTimeSeries.toDoubleArray(len);
+              localActionCountTimeSeriesRef.set(null);
+              localCounterSeriesMap.put(
+                  new CounterSeriesTask(
+                      "action count (local)",
+                      "local action",
+                      CounterSeriesTask.Color.DETAILED_MEMORY_DUMP),
+                  localActionCountValues);
+            }
+            if (hasNonZeroValues(localCounterSeriesMap)) {
+              logCounters(
+                  jsonWriter,
+                  profileStartTimeNanos,
+                  localCounterSeriesMap,
+                  actionCountStartTime,
+                  ACTION_COUNT_BUCKET_DURATION);
+            }
+          }
+
+          private void logCounters(
+              JsonWriter jsonWriter,
+              long profileStartTimeNanos,
+              Map<CounterSeriesTask, double[]> counterSeriesMap,
+              Duration profileStart,
+              Duration bucketDuration)
+              throws IOException {
+            var counterSeriesTraceData =
+                new CounterSeriesTraceData(
+                    threadId, counterSeriesMap, profileStart, bucketDuration);
+            counterSeriesTraceData.writeTraceData(jsonWriter, profileStartTimeNanos);
+          }
+        };
+    JsonTraceFileWriter writer = writerRef.get();
+    if (writer != null) {
+      writer.enqueue(traceData);
     }
   }
 
-  private boolean hasNonZeroValues(Map<ProfilerTask, double[]> countersSeriesMap) {
+  private boolean hasNonZeroValues(Map<CounterSeriesTask, double[]> countersSeriesMap) {
     return countersSeriesMap.values().stream()
         .flatMapToDouble(Arrays::stream)
         .anyMatch(v -> v != 0);
@@ -628,15 +704,29 @@ public final class Profiler {
     return (recordAllDurations || duration >= type.minDuration);
   }
 
+  /** Interface for collecting counter series */
+  public interface CounterSeriesCollector {
+    void collect(double deltaNanos, BiConsumer<CounterSeriesTask, Double> consumer);
+  }
+
+  public void registerCounterSeriesCollector(CounterSeriesCollector collector) {
+    if (!isActive()) {
+      return;
+    }
+
+    localResourceCollector.registerCounterSeriesCollector(collector);
+  }
+
   /** Adds a whole action count series to the writer bypassing histogram and subtask creation. */
   public void logCounters(
-      Map<ProfilerTask, double[]> counterSeriesMap,
+      Map<CounterSeriesTask, double[]> counterSeriesMap,
       Duration profileStart,
       Duration bucketDuration) {
     JsonTraceFileWriter currentWriter = writerRef.get();
     if (isActive() && currentWriter != null) {
       CounterSeriesTraceData counterSeriesTraceData =
-          new CounterSeriesTraceData(counterSeriesMap, profileStart, bucketDuration);
+          new CounterSeriesTraceData(
+              Thread.currentThread().threadId(), counterSeriesMap, profileStart, bucketDuration);
       currentWriter.enqueue(counterSeriesTraceData);
     }
   }
@@ -676,8 +766,7 @@ public final class Profiler {
             currentWriter.enqueue(data);
           }
 
-          SlowestTaskAggregator aggregator = slowestTasks[type.ordinal()];
-
+          SlowestTaskAggregator aggregator = slowestTasks[data.type.ordinal()];
           if (aggregator != null) {
             aggregator.add(data);
           }
@@ -909,23 +998,7 @@ public final class Profiler {
     if (writer != null) {
       writer.enqueue(data);
     }
-    long endTimeNanos = data.startTimeNanos + data.durationNanos;
-    TimeSeries actionCountTimeSeries = actionCountTimeSeriesRef.get();
-    TimeSeries actionCacheCountTimeSeries = actionCacheCountTimeSeriesRef.get();
-    TimeSeries localActionCountTimeSeries = localActionCountTimeSeriesRef.get();
-    if (actionCountTimeSeries != null && countAction(data.type)) {
-      actionCountTimeSeries.addRange(
-          Duration.ofNanos(data.startTimeNanos), Duration.ofNanos(endTimeNanos));
-    }
-    if (actionCacheCountTimeSeries != null && data.type == ProfilerTask.ACTION_CHECK) {
-      actionCacheCountTimeSeries.addRange(
-          Duration.ofNanos(data.startTimeNanos), Duration.ofNanos(endTimeNanos));
-    }
 
-    if (localActionCountTimeSeries != null && data.type == ProfilerTask.LOCAL_ACTION_COUNTS) {
-      localActionCountTimeSeries.addRange(
-          Duration.ofNanos(data.startTimeNanos), Duration.ofNanos(endTimeNanos));
-    }
     SlowestTaskAggregator aggregator = slowestTasks[data.type.ordinal()];
     if (aggregator != null) {
       aggregator.add(data);

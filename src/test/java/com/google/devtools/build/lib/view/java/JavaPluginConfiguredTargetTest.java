@@ -44,6 +44,7 @@ public class JavaPluginConfiguredTargetTest extends BuildViewTestCase {
         "java/plugin",
         "plugin",
         "no such attribute 'constraints' in 'java_plugin'",
+        "load('@rules_java//java:defs.bzl', 'java_plugin')",
         "java_plugin(name = 'plugin',",
         "            srcs = ['A.java'],",
         "            processor_class = 'xx',",
@@ -54,6 +55,7 @@ public class JavaPluginConfiguredTargetTest extends BuildViewTestCase {
     scratch.file(
         "java/com/google/test/BUILD",
         """
+        load("@rules_java//java:defs.bzl", "java_library", "java_plugin")
         java_library(
             name = "deps",
             srcs = ["Deps.java"],
@@ -84,11 +86,10 @@ public class JavaPluginConfiguredTargetTest extends BuildViewTestCase {
     setupEmptyProcessorClass();
 
     ConfiguredTarget processorTarget = getConfiguredTarget("//java/com/google/test:processor");
-    assertThat(processorTarget.get(JavaPluginInfo.PROVIDER).plugins().processorClasses().toList())
+    assertThat(JavaPluginInfo.get(processorTarget).plugins().processorClasses().toList())
         .containsExactly("com.google.test.Processor");
     assertThat(
-            prettyArtifactNames(
-                processorTarget.get(JavaPluginInfo.PROVIDER).plugins().processorClasspath()))
+            prettyArtifactNames(JavaPluginInfo.get(processorTarget).plugins().processorClasspath()))
         .containsExactly(
             "java/com/google/test/libprocessor.jar", "java/com/google/test/libdeps.jar");
   }
@@ -98,12 +99,12 @@ public class JavaPluginConfiguredTargetTest extends BuildViewTestCase {
     setupEmptyProcessorClass();
 
     ConfiguredTarget bugcheckerTarget = getConfiguredTarget("//java/com/google/test:bugchecker");
-    assertThat(bugcheckerTarget.get(JavaPluginInfo.PROVIDER).plugins().processorClasses().toList())
+    assertThat(JavaPluginInfo.get(bugcheckerTarget).plugins().processorClasses().toList())
         .isEmpty();
 
     assertThat(
             prettyArtifactNames(
-                bugcheckerTarget.get(JavaPluginInfo.PROVIDER).plugins().processorClasspath()))
+                JavaPluginInfo.get(bugcheckerTarget).plugins().processorClasspath()))
         .containsExactly(
             "java/com/google/test/libbugchecker.jar", "java/com/google/test/libdeps.jar");
   }
@@ -118,20 +119,20 @@ public class JavaPluginConfiguredTargetTest extends BuildViewTestCase {
         (JavaCompileAction) getGeneratingAction(emptyOutput.getArtifact());
     assertThat(
             Artifact.toRootRelativePaths(
-                bugcheckerTarget
-                    .get(JavaPluginInfo.PROVIDER)
-                    .plugins()
-                    .processorClasspath()
-                    .toList()))
+                JavaPluginInfo.get(bugcheckerTarget).plugins().processorClasspath().toList()))
         .containsExactlyElementsIn(
             Artifact.toRootRelativePaths(getInputs(javacAction, getProcessorpath(javacAction))));
   }
 
   @Test
   public void testJavaPluginExportsTransitiveProguardSpecs() throws Exception {
+    if (analysisMock.isThisBazel()) {
+      return;
+    }
     scratch.file(
         "java/com/google/android/hello/BUILD",
         """
+        load("@rules_java//java:defs.bzl", "java_library", "java_plugin")
         java_plugin(
             name = "plugin",
             srcs = ["Plugin.java"],
@@ -166,6 +167,7 @@ public class JavaPluginConfiguredTargetTest extends BuildViewTestCase {
     scratch.file(
         "java/com/google/android/hello/BUILD",
         """
+        load("@rules_java//java:defs.bzl", "java_plugin")
         java_plugin(
             name = "plugin",
             srcs = ["Plugin.java"],
@@ -191,6 +193,7 @@ public class JavaPluginConfiguredTargetTest extends BuildViewTestCase {
     scratch.file(
         "java/com/google/android/hello/BUILD",
         """
+        load("@rules_java//java:defs.bzl", "java_library", "java_plugin")
         java_library(
             name = "transitive",
             srcs = ["Transitive.java"],
@@ -222,6 +225,7 @@ public class JavaPluginConfiguredTargetTest extends BuildViewTestCase {
     scratch.file(
         "java/com/google/test/BUILD",
         """
+        load("@rules_java//java:defs.bzl", "java_plugin")
         java_plugin(
             name = "api_generating",
             srcs = ["ApiGeneratingPlugin.java"],
@@ -231,7 +235,7 @@ public class JavaPluginConfiguredTargetTest extends BuildViewTestCase {
         """);
 
     JavaPluginInfo plugin =
-        getConfiguredTarget("//java/com/google/test:api_generating").get(JavaPluginInfo.PROVIDER);
+        JavaPluginInfo.get(getConfiguredTarget("//java/com/google/test:api_generating"));
     assertThat(plugin.plugins().processorClasses().toList()).containsExactly("ApiGeneratingPlugin");
     assertThat(plugin.apiGeneratingPlugins().processorClasses().toList())
         .containsExactly("ApiGeneratingPlugin");
@@ -247,6 +251,7 @@ public class JavaPluginConfiguredTargetTest extends BuildViewTestCase {
     scratch.file(
         "java/com/google/test/BUILD",
         """
+        load("@rules_java//java:defs.bzl", "java_plugin")
         java_plugin(
             name = "impl_generating",
             srcs = ["ImplGeneratingPlugin.java"],
@@ -256,7 +261,7 @@ public class JavaPluginConfiguredTargetTest extends BuildViewTestCase {
         """);
 
     JavaPluginInfo plugin =
-        getConfiguredTarget("//java/com/google/test:impl_generating").get(JavaPluginInfo.PROVIDER);
+        JavaPluginInfo.get(getConfiguredTarget("//java/com/google/test:impl_generating"));
     assertThat(plugin.plugins().processorClasses().toList())
         .containsExactly("ImplGeneratingPlugin");
     assertThat(plugin.apiGeneratingPlugins().processorClasses().toList()).isEmpty();
@@ -272,6 +277,7 @@ public class JavaPluginConfiguredTargetTest extends BuildViewTestCase {
     scratch.file(
         "java/com/google/test/BUILD",
         """
+        load("@rules_java//java:defs.bzl", "java_library", "java_plugin")
         java_plugin(
             name = "impl_generating",
             srcs = ["ImplGeneratingPlugin.java"],
@@ -287,7 +293,7 @@ public class JavaPluginConfiguredTargetTest extends BuildViewTestCase {
         """);
 
     JavaPluginInfo plugin =
-        getConfiguredTarget("//java/com/google/test:impl_generating").get(JavaPluginInfo.PROVIDER);
+        JavaPluginInfo.get(getConfiguredTarget("//java/com/google/test:impl_generating"));
     assertThat(prettyArtifactNames(plugin.plugins().data()))
         .containsExactly("java/com/google/test/data.txt");
     FileConfiguredTarget libJar = getFileConfiguredTarget("//java/com/google/test:liblib.jar");

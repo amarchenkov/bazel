@@ -68,8 +68,6 @@ import java.util.Arrays;
 import java.util.BitSet;
 import java.util.Collection;
 import java.util.Collections;
-import java.util.HashMap;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -150,14 +148,6 @@ public class RuleClass implements RuleClassData {
   private static final int MAX_ATTRIBUTE_NAME_LENGTH = 128;
 
   @SerializationConstant
-  static final Function<? super Rule, Map<String, Label>> NO_EXTERNAL_BINDINGS =
-      Functions.constant(ImmutableMap.of());
-
-  @SerializationConstant
-  static final Function<? super Rule, List<String>> NO_TOOLCHAINS_TO_REGISTER =
-      Functions.constant(ImmutableList.of());
-
-  @SerializationConstant
   static final Function<? super Rule, Set<String>> NO_OPTION_REFERENCE =
       Functions.constant(ImmutableSet.of());
 
@@ -169,6 +159,12 @@ public class RuleClass implements RuleClassData {
 
   public static final String APPLICABLE_METADATA_ATTR_ALT = "applicable_licenses";
 
+  public static final String DEFAULT_TEST_RUNNER_EXEC_GROUP_NAME = "test";
+  // The test exec group should not inherit any exec constraints or toolchains from the default exec
+  // group since the execution platform for a test is generally independent (and often different)
+  // from the execution platform of the actions that produce the test executable.
+  public static final ExecGroup DEFAULT_TEST_RUNNER_EXEC_GROUP = ExecGroup.builder().build();
+
   /** Interface for determining whether a rule needs toolchain resolution or not. */
   @FunctionalInterface
   public interface ToolchainResolutionMode extends Serializable {
@@ -176,6 +172,33 @@ public class RuleClass implements RuleClassData {
 
     ToolchainResolutionMode ENABLED = (unused) -> true;
     ToolchainResolutionMode DISABLED = (unused) -> false;
+  }
+
+  /** Enum to determine whether a rule class uses auto exec groups. */
+  public enum AutoExecGroupsMode {
+    /** The rule class does not support auto exec groups. */
+    DISABLED,
+    /** The rule class uses auto exec groups regardless of other settings in the configuration. */
+    ENABLED,
+    /**
+     * The rule class uses auto exec groups if configured using the {@code _use_auto_exec_groups}
+     * attribute and {@code --incompatible_auto_exec_groups} flag.
+     */
+    DYNAMIC;
+
+    public boolean isEnabled(AttributeMap attributes, boolean isAllowedByConfiguration) {
+      return switch (this) {
+        case DISABLED -> false;
+        case ENABLED -> true;
+        case DYNAMIC -> {
+          if (attributes.has("$use_auto_exec_groups")) {
+            yield attributes.get("$use_auto_exec_groups", Type.BOOLEAN);
+          } else {
+            yield isAllowedByConfiguration;
+          }
+        }
+      };
+    }
   }
 
   /** A factory or builder class for rule implementations. */
@@ -188,7 +211,7 @@ public class RuleClass implements RuleClassData {
      *
      * @throws RuleErrorException if configured target creation could not be completed due to rule
      *     errors
-     * @throws TActionConflictException if there were conflicts during action registration
+     * @throws ActionConflictExceptionT if there were conflicts during action registration
      */
     @Nullable
     ConfiguredTargetT create(ContextT ruleContext)
@@ -239,9 +262,15 @@ public class RuleClass implements RuleClassData {
 
   /**
    * For Bazel's constraint system: the attribute that declares the list of constraints that the
-   * execution platform must satisfy to be considered compatible.
+   * default exec group's execution platform must satisfy to be considered compatible.
    */
   public static final String EXEC_COMPATIBLE_WITH_ATTR = "exec_compatible_with";
+
+  /**
+   * For Bazel's constraint system: the attribute that declares the list of constraints that the
+   * given exec groups' execution platforms must satisfy to be considered compatible.
+   */
+  public static final String EXEC_GROUP_COMPATIBLE_WITH_ATTR = "exec_group_compatible_with";
 
   /**
    * The attribute that declares execution properties that should be added to actions created by
@@ -343,9 +372,10 @@ public class RuleClass implements RuleClassData {
       },
 
       /**
-       * Normal rules are instantiable by BUILD files. Their names must therefore obey the rules for
-       * identifiers in the BUILD language. In addition, {@link TargetUtils#isTestRuleName} must
-       * return false for the name.
+       * Normal rules are instantiable by BUILD files, possibly via a macro (symbolic or legacy), in
+       * which case the rule's symbol is namespaced under {@code native}. Normal rule names must
+       * therefore obey the rules for identifiers in the BUILD language. In addition, {@link
+       * TargetUtils#isTestRuleName} must return false for the name.
        */
       NORMAL {
         @Override
@@ -371,6 +401,22 @@ public class RuleClass implements RuleClassData {
                 attribute.getName(),
                 attribute.getType());
           }
+        }
+      },
+
+      /**
+       * Normal rules with the additional restriction that they can only be instantiated by BUILD
+       * files or legacy macros - but not symbolic macros.
+       */
+      BUILD_ONLY {
+        @Override
+        public void checkName(String name) {
+          NORMAL.checkName(name);
+        }
+
+        @Override
+        public void checkAttributes(Map<String, Attribute> attributes) {
+          NORMAL.checkAttributes(attributes);
         }
       },
 
@@ -687,10 +733,6 @@ public class RuleClass implements RuleClassData {
     private BuildSetting buildSetting = null;
 
     private ImmutableList<? extends StarlarkSubruleApi> subrules = ImmutableList.of();
-    private Function<? super Rule, Map<String, Label>> externalBindingsFunction =
-        NO_EXTERNAL_BINDINGS;
-    private Function<? super Rule, ? extends List<String>> toolchainsToRegisterFunction =
-        NO_TOOLCHAINS_TO_REGISTER;
     private Function<? super Rule, ? extends Set<String>> optionReferenceFunction =
         NO_OPTION_REFERENCE;
 
@@ -717,11 +759,12 @@ public class RuleClass implements RuleClassData {
     private boolean supportsConstraintChecking = true;
 
     private final Map<String, Attribute> attributes = new LinkedHashMap<>();
-    private final Set<ToolchainTypeRequirement> toolchainTypes = new HashSet<>();
+    private final Set<ToolchainTypeRequirement> toolchainTypes = new LinkedHashSet<>();
     private ToolchainResolutionMode toolchainResolutionMode = ToolchainResolutionMode.ENABLED;
-    private final Set<Label> executionPlatformConstraints = new HashSet<>();
+    private final Set<Label> executionPlatformConstraints = new LinkedHashSet<>();
     private OutputFile.Kind outputFileKind = OutputFile.Kind.FILE;
-    private final Map<String, ExecGroup> execGroups = new HashMap<>();
+    private final Map<String, ExecGroup> execGroups = new LinkedHashMap<>();
+    private AutoExecGroupsMode autoExecGroupsMode = AutoExecGroupsMode.DYNAMIC;
 
     /**
      * Constructs a new {@link RuleClass.Builder} using all attributes from all parent rule classes.
@@ -776,6 +819,8 @@ public class RuleClass implements RuleClassData {
                       + " requirements in %s ruleclass",
                   e.getDuplicateGroup(), name));
         }
+
+        this.autoExecGroupsMode = parent.getAutoExecGroupsMode();
 
         for (Attribute attribute : parent.getAttributes()) {
           String attrName = attribute.getName();
@@ -860,13 +905,9 @@ public class RuleClass implements RuleClassData {
           type,
           configuredTargetFactory,
           configuredTargetFunction);
-      if (!workspaceOnly) {
-        if (starlark) {
-          assertStarlarkRuleClassHasImplementationFunction();
-          assertStarlarkRuleClassHasEnvironmentLabel();
-        }
-        Preconditions.checkState(externalBindingsFunction == NO_EXTERNAL_BINDINGS);
-        Preconditions.checkState(toolchainsToRegisterFunction == NO_TOOLCHAINS_TO_REGISTER);
+      if (!workspaceOnly && starlark) {
+        assertStarlarkRuleClassHasImplementationFunction();
+        assertStarlarkRuleClassHasEnvironmentLabel();
       }
       if (type == RuleClassType.PLACEHOLDER) {
         Preconditions.checkNotNull(ruleDefinitionEnvironmentDigest, this.name);
@@ -935,8 +976,6 @@ public class RuleClass implements RuleClassData {
           configuredTargetFactory,
           advertisedProviders.build(),
           configuredTargetFunction,
-          externalBindingsFunction,
-          toolchainsToRegisterFunction,
           optionReferenceFunction,
           ruleDefinitionEnvironmentLabel,
           ruleDefinitionEnvironmentDigest,
@@ -947,6 +986,7 @@ public class RuleClass implements RuleClassData {
           toolchainResolutionMode,
           executionPlatformConstraints,
           execGroups,
+          autoExecGroupsMode,
           outputFileKind,
           ImmutableList.copyOf(attributes.values()),
           buildSetting,
@@ -968,14 +1008,19 @@ public class RuleClass implements RuleClassData {
         String attributeName = entry.getKey();
         Attribute attribute = entry.getValue();
 
+        int attributeNameLength =
+            StarlarkSubruleApi.getUserDefinedNameIfSubruleAttr(subrules, attributeName)
+                .map(String::length)
+                .orElse(attributeName.length());
+
         // TODO(b/151171037): This check would make more sense at Attribute creation time, but the
         // use of unchecked exceptions in these APIs makes it brittle.
         Preconditions.checkArgument(
-            attributeName.length() <= MAX_ATTRIBUTE_NAME_LENGTH,
+            attributeNameLength <= MAX_ATTRIBUTE_NAME_LENGTH,
             "Attribute %s.%s's name is too long (%s > %s)",
             ruleClassName,
             attributeName,
-            attributeName.length(),
+            attributeNameLength,
             MAX_ATTRIBUTE_NAME_LENGTH);
 
         if (dependencyResolutionRule) {
@@ -1358,19 +1403,6 @@ public class RuleClass implements RuleClassData {
       return builder.build();
     }
 
-    @CanIgnoreReturnValue
-    public Builder setExternalBindingsFunction(Function<? super Rule, Map<String, Label>> func) {
-      this.externalBindingsFunction = func;
-      return this;
-    }
-
-    @CanIgnoreReturnValue
-    public Builder setToolchainsToRegisterFunction(
-        Function<? super Rule, ? extends List<String>> func) {
-      this.toolchainsToRegisterFunction = func;
-      return this;
-    }
-
     /**
      * Sets the rule definition environment label and transitive digest. Meant for Starlark usage.
      */
@@ -1572,6 +1604,7 @@ public class RuleClass implements RuleClassData {
      * Cause rules of this type to request the specified toolchains be available via toolchain
      * resolution when a target is configured.
      */
+    @CanIgnoreReturnValue
     public Builder addToolchainTypes(ToolchainTypeRequirement... toolchainTypes) {
       return addToolchainTypes(ImmutableList.copyOf(toolchainTypes));
     }
@@ -1599,11 +1632,6 @@ public class RuleClass implements RuleClassData {
       return this;
     }
 
-    /** Adds an exec group that copies its toolchains and constraints from the rule. */
-    public Builder addExecGroup(String name) {
-      return addExecGroups(ImmutableMap.of(name, ExecGroup.copyFromDefault()));
-    }
-
     /** An error to help report {@link ExecGroup}s with the same name */
     static class DuplicateExecGroupError extends RuntimeException {
       private final String duplicateGroup;
@@ -1621,6 +1649,13 @@ public class RuleClass implements RuleClassData {
     /** Checks whether the rule class has an exec group with the given name. */
     public boolean hasExecGroup(String name) {
       return this.execGroups.containsKey(name);
+    }
+
+    /** Sets how this rule class uses auto exec groups. */
+    @CanIgnoreReturnValue
+    public Builder autoExecGroupsMode(AutoExecGroupsMode autoExecGroupsMode) {
+      this.autoExecGroupsMode = autoExecGroupsMode;
+      return this;
     }
 
     /**
@@ -1687,8 +1722,8 @@ public class RuleClass implements RuleClassData {
   private final boolean isStarlark;
   private final boolean extendable;
   // The following 2 fields may be non-null only if the rule is Starlark-defined.
-  @Nullable private Label starlarkExtensionLabel;
-  @Nullable private String starlarkDocumentation;
+  @Nullable private final Label starlarkExtensionLabel;
+  @Nullable private final String starlarkDocumentation;
   @Nullable private final Label extendableAllowlist;
   private final boolean starlarkTestable;
   private final boolean documented;
@@ -1749,12 +1784,6 @@ public class RuleClass implements RuleClassData {
    */
   private final ImmutableSet<? extends StarlarkSubruleApi> subrules;
 
-  /** Returns the extra bindings a workspace function adds to the WORKSPACE file. */
-  private final Function<? super Rule, Map<String, Label>> externalBindingsFunction;
-
-  /** Returns the toolchains a workspace function wants to have registered in the WORKSPACE file. */
-  private final Function<? super Rule, ? extends List<String>> toolchainsToRegisterFunction;
-
   /** Returns the options referenced by this rule's attributes. */
   private final Function<? super Rule, ? extends Set<String>> optionReferenceFunction;
 
@@ -1788,6 +1817,7 @@ public class RuleClass implements RuleClassData {
   private final ToolchainResolutionMode toolchainResolutionMode;
   private final ImmutableSet<Label> executionPlatformConstraints;
   private final ImmutableMap<String, ExecGroup> execGroups;
+  private final AutoExecGroupsMode autoExecGroupsMode;
 
   /**
    * Constructs an instance of RuleClass whose name is 'name', attributes are 'attributes'. The
@@ -1838,8 +1868,6 @@ public class RuleClass implements RuleClassData {
       ConfiguredTargetFactory<?, ?, ?> configuredTargetFactory,
       AdvertisedProviderSet advertisedProviders,
       @Nullable StarlarkCallable configuredTargetFunction,
-      Function<? super Rule, Map<String, Label>> externalBindingsFunction,
-      Function<? super Rule, ? extends List<String>> toolchainsToRegisterFunction,
       Function<? super Rule, ? extends Set<String>> optionReferenceFunction,
       @Nullable Label ruleDefinitionEnvironmentLabel,
       @Nullable byte[] ruleDefinitionEnvironmentDigest,
@@ -1852,6 +1880,7 @@ public class RuleClass implements RuleClassData {
       ToolchainResolutionMode toolchainResolutionMode,
       Set<Label> executionPlatformConstraints,
       Map<String, ExecGroup> execGroups,
+      AutoExecGroupsMode autoExecGroupsMode,
       OutputFile.Kind outputFileKind,
       ImmutableList<Attribute> attributes,
       @Nullable BuildSetting buildSetting,
@@ -1876,8 +1905,6 @@ public class RuleClass implements RuleClassData {
     this.configuredTargetFactory = configuredTargetFactory;
     this.advertisedProviders = advertisedProviders;
     this.configuredTargetFunction = configuredTargetFunction;
-    this.externalBindingsFunction = externalBindingsFunction;
-    this.toolchainsToRegisterFunction = toolchainsToRegisterFunction;
     this.optionReferenceFunction = optionReferenceFunction;
     this.ruleDefinitionEnvironmentLabel = ruleDefinitionEnvironmentLabel;
     this.ruleDefinitionEnvironmentDigest = ruleDefinitionEnvironmentDigest;
@@ -1897,6 +1924,7 @@ public class RuleClass implements RuleClassData {
     this.toolchainResolutionMode = toolchainResolutionMode;
     this.executionPlatformConstraints = ImmutableSet.copyOf(executionPlatformConstraints);
     this.execGroups = ImmutableMap.copyOf(execGroups);
+    this.autoExecGroupsMode = autoExecGroupsMode;
     this.buildSetting = buildSetting;
     this.subrules = ImmutableSet.copyOf(subrules);
     // Create the index and collect non-configurable attributes while doing some validation checks.
@@ -2060,7 +2088,7 @@ public class RuleClass implements RuleClassData {
    * Returns an (immutable) list of all Attributes defined for this class of rule, ordered by
    * increasing index.
    */
-  public List<Attribute> getAttributes() {
+  public ImmutableList<Attribute> getAttributes() {
     return attributes;
   }
 
@@ -2175,7 +2203,8 @@ public class RuleClass implements RuleClassData {
             attributeValues,
             failOnUnknownAttributes,
             pkgBuilder.getListInterner(),
-            pkgBuilder.getLocalEventHandler());
+            pkgBuilder.getLocalEventHandler(),
+            pkgBuilder.simplifyUnconditionalSelectsInRuleAttrs());
     populateDefaultRuleAttributeValues(rule, pkgBuilder, definedAttrIndices);
     // Now that all attributes are bound to values, collect and store configurable attribute keys.
     populateConfigDependenciesAttribute(rule);
@@ -2198,7 +2227,8 @@ public class RuleClass implements RuleClassData {
       AttributeValues<T> attributeValues,
       boolean failOnUnknownAttributes,
       Interner<ImmutableList<?>> listInterner,
-      EventHandler eventHandler) {
+      EventHandler eventHandler,
+      boolean simplifyUnconditionalSelects) {
     BitSet definedAttrIndices = new BitSet();
     for (T attributeAccessor : attributeValues.getAttributeAccessors()) {
       String attributeName = attributeValues.getName(attributeAccessor);
@@ -2251,9 +2281,18 @@ public class RuleClass implements RuleClassData {
         try {
           nativeAttributeValue =
               BuildType.convertFromBuildLangType(
-                  rule.getRuleClass(), attr, attributeValue, labelConverter, listInterner);
+                  rule.getRuleClass(),
+                  attr,
+                  attributeValue,
+                  labelConverter,
+                  listInterner,
+                  simplifyUnconditionalSelects);
         } catch (ConversionException e) {
           rule.reportError(String.format("%s: %s", rule.getLabel(), e.getMessage()), eventHandler);
+          continue;
+        }
+        // Ignore select({"//conditions:default": None}) values for attr types with null default.
+        if (nativeAttributeValue == null) {
           continue;
         }
       } else {
@@ -2264,7 +2303,7 @@ public class RuleClass implements RuleClassData {
         @SuppressWarnings("unchecked")
         List<Label> vis = (List<Label>) nativeAttributeValue;
         try {
-          RuleVisibility.validate(vis);
+          nativeAttributeValue = RuleVisibility.validateAndSimplify(vis);
         } catch (EvalException e) {
           rule.reportError(rule.getLabel() + " " + e.getMessage(), eventHandler);
         }
@@ -2319,7 +2358,8 @@ public class RuleClass implements RuleClassData {
 
       } else if (attr.isLateBound()) {
         rule.setAttributeValue(attr, attr.getLateBoundDefault(), /* explicit= */ false);
-
+      } else if (attr.isMaterializing()) {
+        rule.setAttributeValue(attr, attr.getMaterializer(), false);
       } else if (attr.getName().equals(APPLICABLE_METADATA_ATTR)
           && attr.getType() == BuildType.LABEL_LIST) {
         // The check here is preventing against a corner case where the license()/package_info()
@@ -2394,8 +2434,7 @@ public class RuleClass implements RuleClassData {
       // be discovered and propagated here.
       Object valueToSet;
       Object defaultValue = attr.getDefaultValue(null);
-      if (defaultValue instanceof StarlarkComputedDefaultTemplate) {
-        StarlarkComputedDefaultTemplate template = (StarlarkComputedDefaultTemplate) defaultValue;
+      if (defaultValue instanceof StarlarkComputedDefaultTemplate template) {
         valueToSet = template.computePossibleValues(attr, rule, pkgBuilder.getLocalEventHandler());
       } else if (defaultValue instanceof ComputedDefault) {
         // Compute all possible values to verify that the ComputedDefault is well-defined. This was
@@ -2583,22 +2622,6 @@ public class RuleClass implements RuleClassData {
     return buildSetting;
   }
 
-  /**
-   * Returns a function that computes the external bindings a repository function contributes to the
-   * WORKSPACE file.
-   */
-  Function<? super Rule, Map<String, Label>> getExternalBindingsFunction() {
-    return externalBindingsFunction;
-  }
-
-  /**
-   * Returns a function that computes the toolchains that should be registered for a repository
-   * function.
-   */
-  Function<? super Rule, ? extends List<String>> getToolchainsToRegisterFunction() {
-    return toolchainsToRegisterFunction;
-  }
-
   /** Returns a function that computes the options referenced by a rule. */
   public Function<? super Rule, ? extends Set<String>> getOptionReferenceFunction() {
     return optionReferenceFunction;
@@ -2749,6 +2772,10 @@ public class RuleClass implements RuleClassData {
 
   public ImmutableMap<String, ExecGroup> getExecGroups() {
     return execGroups;
+  }
+
+  public AutoExecGroupsMode getAutoExecGroupsMode() {
+    return autoExecGroupsMode;
   }
 
   OutputFile.Kind getOutputFileKind() {

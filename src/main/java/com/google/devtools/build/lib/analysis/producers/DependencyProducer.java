@@ -23,6 +23,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.devtools.build.lib.analysis.AnalysisRootCauseEvent;
 import com.google.devtools.build.lib.analysis.DependencyKind;
+import com.google.devtools.build.lib.analysis.DependencyKind.AttributeDependencyKind;
 import com.google.devtools.build.lib.analysis.DependencyKind.ToolchainDependencyKind;
 import com.google.devtools.build.lib.analysis.DependencyResolutionHelpers;
 import com.google.devtools.build.lib.analysis.DependencyResolutionHelpers.ExecutionPlatformResult;
@@ -46,6 +47,7 @@ import com.google.devtools.build.lib.packages.NoSuchThingException;
 import com.google.devtools.build.lib.packages.Target;
 import com.google.devtools.build.lib.packages.TargetUtils;
 import com.google.devtools.build.lib.skyframe.AspectCreationException;
+import com.google.devtools.build.lib.skyframe.BuildOptionsScopeFunction.BuildOptionsScopeFunctionException;
 import com.google.devtools.build.lib.skyframe.ConfiguredTargetAndData;
 import com.google.devtools.build.lib.skyframe.ConfiguredValueCreationException;
 import com.google.devtools.build.lib.skyframe.config.BuildConfigurationKey;
@@ -159,7 +161,11 @@ final class DependencyProducer
             .attributes(parameters.attributeMap())
             .analysisData(parameters.starlarkTransitionProvider());
     ExecutionPlatformResult executionPlatformResult =
-        getExecutionPlatformLabel(kind, parameters.toolchainContexts(), parameters.aspects());
+        getExecutionPlatformLabel(
+            (AttributeDependencyKind) kind,
+            parameters.toolchainContexts(),
+            parameters.baseTargetToolchainContexts(),
+            parameters.aspects());
     switch (executionPlatformResult.kind()) {
       case LABEL -> transitionData.executionPlatform(executionPlatformResult.label());
       case NULL_LABEL -> transitionData.executionPlatform(null);
@@ -180,6 +186,7 @@ final class DependencyProducer
     }
     sink.acceptTransition(kind, toLabel, attributeTransition);
     return new TransitionApplier(
+        toLabel,
         configurationKey,
         attributeTransition,
         parameters.transitionCache(),
@@ -206,6 +213,11 @@ final class DependencyProducer
         DependencyError.of(
             new OptionsParsingException(
                 getMessageWithEdgeTransitionInfo(e), e.getInvalidArgument(), e)));
+  }
+
+  @Override
+  public void acceptBuildOptionsScopeFunctionError(BuildOptionsScopeFunctionException e) {
+    sink.acceptDependencyError(DependencyError.of(e));
   }
 
   @Override

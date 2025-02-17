@@ -31,6 +31,7 @@ import com.google.devtools.build.lib.skyframe.serialization.FingerprintValueStor
 import com.google.devtools.build.skyframe.SkyKey;
 import com.google.devtools.build.skyframe.SkyValue;
 import com.google.devtools.build.skyframe.SkyframeLookupResult.QueryDepCallback;
+
 import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.CodedInputStream;
@@ -140,9 +141,8 @@ final class SharedValueDeserializationContext extends MemoizingDeserializationCo
       ObjectCodecRegistry codecRegistry,
       ImmutableClassToInstanceMap<Object> dependencies,
       FingerprintValueService fingerprintValueService,
-      ByteString bytes)
+      CodedInputStream codedIn)
       throws SerializationException {
-    CodedInputStream codedIn = bytes.newCodedInput();
     // Enabling aliasing of `codedIn` here might be better for performance but causes deserialized
     // values to differ subtly from the input values, complicating testing.
     //
@@ -171,6 +171,7 @@ final class SharedValueDeserializationContext extends MemoizingDeserializationCo
         directExecutor());
   }
 
+  // TODO: b/386384684 - remove Unsafe usage
   @Override
   @SuppressWarnings("SunApi") // TODO: b/331765692 - delete this
   public void deserialize(CodedInputStream codedIn, Object parent, long offset)
@@ -222,6 +223,7 @@ final class SharedValueDeserializationContext extends MemoizingDeserializationCo
             directExecutor()));
   }
 
+  // TODO: b/386384684 - remove Unsafe usage
   @Override
   @SuppressWarnings("SunApi") // TODO: b/331765692 - delete this
   public void deserialize(CodedInputStream codedIn, Object parent, long offset, Runnable done)
@@ -274,8 +276,7 @@ final class SharedValueDeserializationContext extends MemoizingDeserializationCo
       T parent,
       FieldSetter<? super T> setter)
       throws IOException, SerializationException {
-    ByteString fingerprint =
-        ByteString.copyFrom(codedIn.readRawBytes(fingerprintValueService.fingerprintLength()));
+    PackedFingerprint fingerprint = PackedFingerprint.readFrom(codedIn);
     SettableFuture<Object> getOperation = SettableFuture.create();
     Object previous =
         fingerprintValueService.getOrClaimGetOperation(fingerprint, distinguisher, getOperation);
@@ -313,7 +314,7 @@ final class SharedValueDeserializationContext extends MemoizingDeserializationCo
   }
 
   private <T> void readValueForFingerprint(
-      ByteString fingerprint,
+      PackedFingerprint fingerprint,
       DeferredObjectCodec<?> codec,
       T parent,
       FieldSetter<? super T> setter,

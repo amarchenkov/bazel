@@ -45,11 +45,6 @@ public class FakeLoadTarget implements Target {
   }
 
   @Override
-  public String getName() {
-    return label.getName();
-  }
-
-  @Override
   public Package getPackage() {
     return pkg;
   }
@@ -80,7 +75,7 @@ public class FakeLoadTarget implements Target {
   }
 
   @Override
-  public RuleVisibility getVisibility() {
+  public RuleVisibility getRawVisibility() {
     return RuleVisibility.PUBLIC;
   }
 

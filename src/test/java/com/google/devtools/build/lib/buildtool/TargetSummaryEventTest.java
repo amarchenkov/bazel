@@ -29,14 +29,12 @@ import com.google.devtools.build.lib.buildtool.util.BuildIntegrationTestCase;
 import com.google.devtools.build.lib.runtime.BlazeCommandDispatcher;
 import com.google.devtools.build.lib.runtime.BlazeRuntime;
 import com.google.devtools.build.lib.runtime.NoSpawnCacheModule;
-import com.google.devtools.build.lib.testutil.BlazeTestUtils;
 import com.google.devtools.build.lib.vfs.FileSystemUtils;
 import com.google.devtools.build.lib.vfs.Path;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.util.List;
 import javax.annotation.Nullable;
 import org.junit.Before;
 import org.junit.Rule;
@@ -96,7 +94,10 @@ public class TargetSummaryEventTest extends BuildIntegrationTestCase {
   @Test
   public void test_buildSucceeds_testSucceeds() throws Exception {
     write("foo/good_test.sh", "#!/bin/bash", "true").setExecutable(true);
-    write("foo/BUILD", "sh_test(name = 'good_test', srcs = ['good_test.sh'])");
+    write(
+        "foo/BUILD",
+        "load('//test_defs:foo_test.bzl', 'foo_test')",
+        "foo_test(name = 'good_test', srcs = ['good_test.sh'])");
 
     File bep = testTargetAndCaptureBuildEventProtocol("//foo:good_test");
 
@@ -108,7 +109,10 @@ public class TargetSummaryEventTest extends BuildIntegrationTestCase {
   @Test
   public void test_buildSucceeds_testFails() throws Exception {
     write("foo/bad_test.sh", "#!/bin/bash", "false").setExecutable(true);
-    write("foo/BUILD", "sh_test(name = 'bad_test', srcs = ['bad_test.sh'])");
+    write(
+        "foo/BUILD",
+        "load('//test_defs:foo_test.bzl', 'foo_test')",
+        "foo_test(name = 'bad_test', srcs = ['bad_test.sh'])");
 
     File bep = testTargetAndCaptureBuildEventProtocol("//foo:bad_test");
 
@@ -120,7 +124,10 @@ public class TargetSummaryEventTest extends BuildIntegrationTestCase {
   @Test
   public void test_buildSucceeds_testRuntimeFailsToBuild() throws Exception {
     write("foo/good_test.sh", "#!/bin/bash", "true").setExecutable(true);
-    write("foo/BUILD", "sh_test(name = 'good_test', srcs = ['good_test.sh'])");
+    write(
+        "foo/BUILD",
+        "load('//test_defs:foo_test.bzl', 'foo_test')",
+        "foo_test(name = 'good_test', srcs = ['good_test.sh'])");
 
     // Hack: the path to the tools/test/BUILD file is prefixed in the Bazel tests.
     String pathToToolsTestBuildPrefix = AnalysisMock.get().isThisBazel() ? "embedded_tools/" : "";
@@ -182,10 +189,12 @@ public class TargetSummaryEventTest extends BuildIntegrationTestCase {
     BlazeCommandDispatcher dispatcher = new BlazeCommandDispatcher(getRuntime());
     ImmutableList.Builder<String> args = ImmutableList.builder();
     args.add("test", target);
-    args.addAll(getDefaultBlazeTestArguments());
+    args.addAll(runtimeWrapper.getOptions());
     // We use WAIT_FOR_UPLOAD_COMPLETE because it's the easiest way to force the BES module to
     // wait until the BEP binary file has been written.
     args.add(
+        "--default_visibility=public",
+        "--test_output=all",
         "--keep_going",
         "--client_env=PATH=/bin:/usr/bin:/usr/sbin:/sbin",
         "--experimental_bep_target_summary",
@@ -193,10 +202,6 @@ public class TargetSummaryEventTest extends BuildIntegrationTestCase {
         "--bes_upload_mode=WAIT_FOR_UPLOAD_COMPLETE");
     dispatcher.exec(args.build(), /* clientDescription= */ "test", outErr);
     return bep;
-  }
-
-  protected List<String> getDefaultBlazeTestArguments() {
-    return BlazeTestUtils.makeArgs("--default_visibility=public", "--test_output=all");
   }
 
   private static ImmutableList<BuildEvent> parseBuildEventsFromBuildEventStream(File bep)

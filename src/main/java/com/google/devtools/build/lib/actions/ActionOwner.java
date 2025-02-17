@@ -13,11 +13,14 @@
 // limitations under the License.
 package com.google.devtools.build.lib.actions;
 
+import static java.util.stream.Collectors.joining;
+
 import com.google.auto.value.AutoValue;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.devtools.build.lib.analysis.config.BuildConfigurationInfo;
+import com.google.devtools.build.lib.analysis.platform.PlatformConstants;
 import com.google.devtools.build.lib.analysis.platform.PlatformInfo;
 import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.concurrent.ThreadSafety.Immutable;
@@ -39,14 +42,14 @@ public abstract class ActionOwner {
   @SerializationConstant
   public static final ActionOwner SYSTEM_ACTION_OWNER =
       createDummy(
-          /* label= */ null,
+          /* label= */ Label.parseCanonicalUnchecked(PlatformConstants.INTERNAL_PLATFORM),
           Location.BUILTIN,
           /* targetKind= */ "empty target kind",
           /* buildConfigurationMnemonic= */ "system",
           /* configurationChecksum= */ "system",
           /* buildConfigurationEvent= */ null,
           /* isToolConfiguration= */ false,
-          /* executionPlatform= */ null,
+          /* executionPlatform= */ PlatformInfo.EMPTY_PLATFORM_INFO,
           /* aspectDescriptors= */ ImmutableList.of(),
           /* execProperties= */ ImmutableMap.of());
 
@@ -97,6 +100,27 @@ public abstract class ActionOwner {
         executionPlatform,
         aspectDescriptors,
         execProperties);
+  }
+
+  @Nullable
+  public String getDescription() {
+    Label label = getLabel();
+    if (label == null) {
+      return null;
+    }
+    String targetDescription = "target " + label;
+
+    ImmutableList<AspectDescriptor> aspectDescriptors = getAspectDescriptors();
+    if (aspectDescriptors.isEmpty()) {
+      return targetDescription;
+    }
+
+    String aspectNames =
+        aspectDescriptors.stream().map(AspectDescriptor::getDescription).collect(joining(", "));
+
+    return String.format(
+        "aspect%s [%s] on %s",
+        aspectDescriptors.size() >= 1 ? "s" : "", aspectNames, targetDescription);
   }
 
   /**
@@ -155,7 +179,12 @@ public abstract class ActionOwner {
 
   public abstract ImmutableList<AspectDescriptor> getAspectDescriptors();
 
-  /** Returns a String to String map containing the execution properties of this action. */
+  /**
+   * Returns a String to String map containing the execution properties available at the target
+   * level, e.g. via the exec_properties attribute of the rule or the execution platform for the
+   * exec group that the action is assigned to. This does <em>not</em> include any action-specific
+   * properties.
+   */
   @VisibleForTesting
   public abstract ImmutableMap<String, String> getExecProperties();
 

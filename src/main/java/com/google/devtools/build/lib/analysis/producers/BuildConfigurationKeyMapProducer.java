@@ -16,6 +16,8 @@ package com.google.devtools.build.lib.analysis.producers;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Maps;
 import com.google.devtools.build.lib.analysis.config.BuildOptions;
+import com.google.devtools.build.lib.cmdline.Label;
+import com.google.devtools.build.lib.skyframe.BuildOptionsScopeFunction.BuildOptionsScopeFunctionException;
 import com.google.devtools.build.lib.skyframe.config.BuildConfigurationKey;
 import com.google.devtools.build.lib.skyframe.config.PlatformMappingException;
 import com.google.devtools.build.lib.skyframe.toolchains.PlatformLookupUtil.InvalidPlatformException;
@@ -42,6 +44,8 @@ public class BuildConfigurationKeyMapProducer
 
     void acceptPlatformFlagsError(InvalidPlatformException error);
 
+    void acceptBuildOptionsScopeFunctionError(BuildOptionsScopeFunctionException e);
+
     void acceptTransitionedConfigurations(
         ImmutableMap<String, BuildConfigurationKey> transitionedOptions);
   }
@@ -50,29 +54,31 @@ public class BuildConfigurationKeyMapProducer
   private final ResultSink sink;
   private final StateMachine runAfter;
   private final Map<String, BuildOptions> options;
+  private final Label label;
 
   // -------------------- Internal State --------------------
   private final Map<String, BuildConfigurationKey> results;
 
   public BuildConfigurationKeyMapProducer(
-      ResultSink sink, StateMachine runAfter, Map<String, BuildOptions> options) {
+      ResultSink sink, StateMachine runAfter, Map<String, BuildOptions> options, Label label) {
     this.sink = sink;
     this.runAfter = runAfter;
     this.options = options;
     this.results = Maps.newHashMapWithExpectedSize(options.size());
+    this.label = label;
   }
 
   @Override
   public StateMachine step(Tasks tasks) {
-    this.options.entrySet().stream()
-        .map(
-            entry ->
+    options.forEach(
+        (context, buildOptions) ->
+            tasks.enqueue(
                 new BuildConfigurationKeyProducer<>(
                     (BuildConfigurationKeyProducer.ResultSink<String>) this,
                     StateMachine.DONE,
-                    entry.getKey(),
-                    entry.getValue()))
-        .forEach(tasks::enqueue);
+                    context,
+                    buildOptions,
+                    label)));
     return this::combineResults;
   }
 
@@ -113,5 +119,10 @@ public class BuildConfigurationKeyMapProducer
   public void acceptTransitionedConfiguration(
       String transitionKey, BuildConfigurationKey transitionedOptionKey) {
     this.results.put(transitionKey, transitionedOptionKey);
+  }
+
+  @Override
+  public void acceptBuildOptionsScopeFunctionError(BuildOptionsScopeFunctionException e) {
+    this.sink.acceptBuildOptionsScopeFunctionError(e);
   }
 }

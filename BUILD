@@ -2,6 +2,7 @@
 
 load("@bazel_skylib//rules:write_file.bzl", "write_file")
 load("@rules_license//rules:license.bzl", "license")
+load("@rules_pkg//pkg:mappings.bzl", "pkg_attributes", "pkg_files")
 load("@rules_pkg//pkg:tar.bzl", "pkg_tar")
 load("@rules_python//python:defs.bzl", "py_binary")
 load("//src/tools/bzlmod:utils.bzl", "get_canonical_repo_name")
@@ -19,7 +20,10 @@ license(
     license_text = "LICENSE",
 )
 
-exports_files(["LICENSE"])
+exports_files([
+    "LICENSE",
+    "MODULE.bazel.lock",
+])
 
 filegroup(
     name = "srcs",
@@ -27,7 +31,6 @@ filegroup(
         ["*"],
         exclude = [
             "MODULE.bazel.lock",  # Use MODULE.bazel.lock.dist instead
-            "WORKSPACE.bzlmod",  # Needs to be filtered.
             "bazel-*",  # convenience symlinks
             "out",  # IntelliJ with setup-intellij.sh
             "output",  # output of compile.sh
@@ -35,7 +38,6 @@ filegroup(
         ],
     ) + [
         "//:MODULE.bazel.lock.dist",
-        "//:WORKSPACE.bzlmod.filtered",
         "//examples:srcs",
         "//scripts:srcs",
         "//site:srcs",
@@ -76,22 +78,14 @@ filegroup(
 )
 
 genrule(
-    name = "filtered_WORKSPACE",
-    srcs = ["WORKSPACE.bzlmod"],
-    outs = ["WORKSPACE.bzlmod.filtered"],
-    cmd = "\n".join([
-        "cp $< $@",
-        # Comment out the android repos if they exist.
-        "sed -i.bak -e 's/^android_sdk_repository/# android_sdk_repository/' $@",
-    ]),
-)
-
-genrule(
     name = "generate_dist_lockfile",
     srcs = [
         "MODULE.bazel",
-        "//third_party/googleapis:MODULE.bazel",
         "//third_party/remoteapis:MODULE.bazel",
+        "//third_party:BUILD",
+        "//third_party:rules_jvm_external_6.5.patch",
+        "//third_party:rules_graalvm_fix.patch",
+        "//third_party:rules_graalvm_unicode.patch",
     ],
     outs = ["MODULE.bazel.lock.dist"],
     cmd = " && ".join([
@@ -115,7 +109,9 @@ genrule(
 pkg_tar(
     name = "bootstrap-jars",
     srcs = [
-        "@blake3",
+        "//third_party/googleapis:dist_jars",
+        "//third_party/grpc-java:grpc_jars",
+        "@async_profiler//file",
         "@com_google_protobuf//:protobuf_java",
         "@com_google_protobuf//:protobuf_java_util",
         "@com_google_protobuf//:protobuf_javalite",
@@ -157,23 +153,33 @@ filegroup(
     srcs = [
         "//src/main/java/com/google/devtools/build/lib/bazel/rules:builtins_bzl.zip",
         "//src/main/java/com/google/devtools/build/lib/bazel/rules:coverage.WORKSPACE",
-        "//src/main/java/com/google/devtools/build/lib/bazel/rules:rules_license.WORKSPACE",
+        "//src/main/java/com/google/devtools/build/lib/bazel/rules:rules_suffix.WORKSPACE",
         "//src/main/java/com/google/devtools/build/lib/bazel/rules/cpp:cc_configure.WORKSPACE",
-        "//src/main/java/com/google/devtools/build/lib/bazel/rules/java:jdk.WORKSPACE",
     ],
+)
+
+# Bazel sources excluding files that are not needed in the distfile.
+pkg_files(
+    name = "dist-srcs",
+    srcs = ["//:srcs"],
+    attributes = pkg_attributes(mode = "0755"),
+    excludes = [
+        "//examples:srcs",
+        "//site:srcs",
+        "//src:srcs-to-exclude-in-distfile",
+    ],
+    renames = {
+        "MODULE.bazel.lock.dist": "MODULE.bazel.lock",
+    },
+    strip_prefix = "/",  # Ensure paths are relative to the workspace root.
 )
 
 pkg_tar(
     name = "bazel-srcs",
     srcs = [
+        ":dist-srcs",
         ":generated_resources",
-        ":srcs",
     ],
-    # TODO(aiuto): Replace with pkg_filegroup when that is available.
-    remap_paths = {
-        "MODULE.bazel.lock.dist": "MODULE.bazel.lock",
-        "WORKSPACE.bzlmod.filtered": "WORKSPACE.bzlmod",
-    },
     strip_prefix = ".",
     # Public but bazel-only visibility.
     visibility = ["//:__subpackages__"],
@@ -182,17 +188,6 @@ pkg_tar(
 pkg_tar(
     name = "platforms-srcs",
     srcs = ["@platforms//:srcs"],
-    remap_paths = {
-        "external/": "",
-        "../": "",
-    },
-    strip_prefix = ".",
-    visibility = ["//:__subpackages__"],
-)
-
-pkg_tar(
-    name = "rules_java-srcs",
-    srcs = ["@rules_java//:distribution"],
     remap_paths = {
         "external/": "",
         "../": "",
@@ -255,7 +250,6 @@ genrule(
         ":bazel-srcs",
         ":bootstrap-jars",
         ":platforms-srcs",
-        ":rules_java-srcs",
         ":maven-srcs",
         "//src:derived_java_srcs",
         "@bootstrap_repo_cache//:archives.tar",

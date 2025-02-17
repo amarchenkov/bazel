@@ -175,11 +175,7 @@ final class ExecutionServer extends ExecutionImplBase {
       return;
     }
     ((ServerCallStreamObserver<Operation>) responseObserver)
-        .setOnCancelHandler(
-            () -> {
-              future.cancel(true);
-              operationsCache.remove(opName);
-            });
+        .setOnCancelHandler(() -> operationsCache.remove(opName));
     waitExecution(opName, future, responseObserver);
   }
 
@@ -241,11 +237,7 @@ final class ExecutionServer extends ExecutionImplBase {
         executorService.submit(() -> execute(context, request, opName));
     operationsCache.put(opName, future);
     ((ServerCallStreamObserver<Operation>) responseObserver)
-        .setOnCancelHandler(
-            () -> {
-              future.cancel(true);
-              operationsCache.remove(opName);
-            });
+        .setOnCancelHandler(() -> operationsCache.remove(opName));
     // Send the first operation.
     responseObserver.onNext(Operation.newBuilder().setName(opName).build());
     // When the operation completes, send the result.
@@ -316,27 +308,44 @@ final class ExecutionServer extends ExecutionImplBase {
     Path workingDirectory = execRoot.getRelative(command.getWorkingDirectory());
     workingDirectory.createDirectoryAndParents();
 
-    List<Path> outputs =
-        new ArrayList<>(command.getOutputDirectoriesCount() + command.getOutputFilesCount());
-
-    for (String output : command.getOutputFilesList()) {
-      Path file = workingDirectory.getRelative(output);
-      if (file.exists()) {
-        throw new FileAlreadyExistsException("Output file already exists: " + file);
-      }
-      file.getParentDirectory().createDirectoryAndParents();
-      outputs.add(file);
-    }
-    for (String output : command.getOutputDirectoriesList()) {
-      Path file = workingDirectory.getRelative(output);
-      if (file.exists()) {
-        if (!file.isDirectory()) {
-          throw new FileAlreadyExistsException(
-              "Non-directory exists at output directory path: " + file);
+    List<Path> outputs;
+    if (command.getOutputPathsCount() == 0) {
+      outputs =
+          new ArrayList<>(command.getOutputDirectoriesCount() + command.getOutputFilesCount());
+      for (String output : command.getOutputFilesList()) {
+        var file = workingDirectory.getRelative(output);
+        if (file.exists()) {
+          throw new FileAlreadyExistsException("Output file already exists: " + file);
         }
+        file.getParentDirectory().createDirectoryAndParents();
+        outputs.add(file);
       }
-      file.getParentDirectory().createDirectoryAndParents();
-      outputs.add(file);
+      for (String output : command.getOutputDirectoriesList()) {
+        Path file = workingDirectory.getRelative(output);
+        if (file.exists()) {
+          if (!file.isDirectory()) {
+            throw new FileAlreadyExistsException(
+                "Non-directory exists at output directory path: " + file);
+          }
+        }
+        file.getParentDirectory().createDirectoryAndParents();
+        outputs.add(file);
+      }
+    } else {
+      outputs = new ArrayList<>(command.getOutputPathsCount());
+      for (String output : command.getOutputPathsList()) {
+        var file = workingDirectory.getRelative(output);
+        // Since https://github.com/bazelbuild/bazel/pull/15818,
+        // Bazel includes all expected output directories as part of Action's inputs.
+        //
+        // Ensure no output file exists before execution happen.
+        // Ignore if output directories pre-exist.
+        if (file.exists() && !file.isDirectory()) {
+          throw new FileAlreadyExistsException("Output file already exists: " + file);
+        }
+        file.getParentDirectory().createDirectoryAndParents();
+        outputs.add(file);
+      }
     }
 
     // TODO(ulfjack): This is basically a copy of LocalSpawnRunner. Ideally, we'd use that
@@ -372,7 +381,7 @@ final class ExecutionServer extends ExecutionImplBase {
               ? Durations.toMillis(action.getTimeout())
               : TimeUnit.MINUTES.toMillis(15);
       boolean wasTimeout =
-          (cmdResult != null && cmdResult.getTerminationStatus().timedOut())
+          (cmdResult != null && cmdResult.terminationStatus().timedOut())
               || wasTimeout(timeoutMillis, wallTime.toMillis());
       final int exitCode;
       Status errStatus = null;
@@ -392,7 +401,7 @@ final class ExecutionServer extends ExecutionImplBase {
       } else if (cmdResult == null) {
         exitCode = LOCAL_EXEC_ERROR;
       } else {
-        exitCode = cmdResult.getTerminationStatus().getRawExitCode();
+        exitCode = cmdResult.terminationStatus().getRawExitCode();
       }
 
       ActionResult result = null;

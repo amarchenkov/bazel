@@ -33,11 +33,13 @@ import com.google.devtools.build.lib.actions.CommandLine;
 import com.google.devtools.build.lib.actions.CommandLine.SimpleArgChunk;
 import com.google.devtools.build.lib.actions.CommandLineExpansionException;
 import com.google.devtools.build.lib.actions.FilesetOutputSymlink;
+import com.google.devtools.build.lib.actions.FilesetOutputTree;
 import com.google.devtools.build.lib.actions.PathMapper;
 import com.google.devtools.build.lib.actions.util.ActionsTestUtil;
 import com.google.devtools.build.lib.analysis.config.CoreOptions;
 import com.google.devtools.build.lib.analysis.starlark.StarlarkCustomCommandLine.VectorArg;
 import com.google.devtools.build.lib.cmdline.BazelModuleContext;
+import com.google.devtools.build.lib.cmdline.BazelModuleKey;
 import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.cmdline.RepositoryMapping;
 import com.google.devtools.build.lib.testutil.Scratch;
@@ -236,7 +238,8 @@ public final class StarlarkCustomCommandLineTest {
     ArtifactExpander artifactExpander =
         createArtifactExpander(
             /* treeExpansions= */ ImmutableMap.of(),
-            ImmutableMap.of(fileset, ImmutableList.of(symlink1, symlink2)));
+            ImmutableMap.of(
+                fileset, FilesetOutputTree.create(ImmutableList.of(symlink1, symlink2))));
 
     commandLine.addToFingerprint(
         actionKeyContext, artifactExpander, CoreOptions.OutputPathsMode.OFF, fingerprint);
@@ -313,7 +316,8 @@ public final class StarlarkCustomCommandLineTest {
     ArtifactExpander artifactExpander =
         createArtifactExpander(
             /* treeExpansions= */ ImmutableMap.of(),
-            ImmutableMap.of(fileset, ImmutableList.of(symlink1, symlink2)));
+            ImmutableMap.of(
+                fileset, FilesetOutputTree.create(ImmutableList.of(symlink1, symlink2))));
 
     Iterable<String> arguments = commandLine.arguments(artifactExpander, PathMapper.NOOP);
 
@@ -392,7 +396,9 @@ public final class StarlarkCustomCommandLineTest {
 
   private FilesetOutputSymlink createFilesetSymlink(String relativePath) {
     return FilesetOutputSymlink.createForTesting(
-        PathFragment.create(relativePath), PathFragment.EMPTY_FRAGMENT, execRoot.asFragment());
+        PathFragment.create(relativePath),
+        execRoot.asFragment().getRelative("some/target"),
+        execRoot.asFragment());
   }
 
   private SpecialArtifact createTreeArtifact(String relativePath) {
@@ -411,7 +417,7 @@ public final class StarlarkCustomCommandLineTest {
 
   private static ArtifactExpander createArtifactExpander(
       ImmutableMap<SpecialArtifact, ImmutableSortedSet<TreeFileArtifact>> treeExpansions,
-      ImmutableMap<SpecialArtifact, ImmutableList<FilesetOutputSymlink>> filesetExpansions) {
+      ImmutableMap<SpecialArtifact, FilesetOutputTree> filesetExpansions) {
     return new ArtifactExpander() {
       @Override
       public ImmutableSortedSet<TreeFileArtifact> expandTreeArtifact(Artifact treeArtifact)
@@ -425,14 +431,13 @@ public final class StarlarkCustomCommandLineTest {
       }
 
       @Override
-      public ImmutableList<FilesetOutputSymlink> expandFileset(Artifact artifact)
-          throws MissingExpansionException {
+      public FilesetOutputTree expandFileset(Artifact artifact) throws MissingExpansionException {
         //noinspection SuspiciousMethodCalls
-        ImmutableList<FilesetOutputSymlink> filesetLinks = filesetExpansions.get(artifact);
-        if (filesetLinks == null) {
+        FilesetOutputTree filesetOutput = filesetExpansions.get(artifact);
+        if (filesetOutput == null) {
           throw new MissingExpansionException("Cannot expand " + artifact);
         }
-        return filesetLinks;
+        return filesetOutput;
       }
     };
   }
@@ -447,7 +452,8 @@ public final class StarlarkCustomCommandLineTest {
               StarlarkSemantics.DEFAULT,
               ImmutableMap.of(),
               BazelModuleContext.create(
-                  Label.parseCanonicalUnchecked("//test:label"),
+                  BazelModuleKey.createFakeModuleKeyForTesting(
+                      Label.parseCanonicalUnchecked("//test:label")),
                   RepositoryMapping.ALWAYS_FALLBACK,
                   "test/label.bzl",
                   /* loads= */ ImmutableList.of(),

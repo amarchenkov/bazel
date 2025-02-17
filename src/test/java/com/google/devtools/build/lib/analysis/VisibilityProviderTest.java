@@ -32,7 +32,6 @@ public final class VisibilityProviderTest extends BuildViewTestCase {
   @Before
   public void setUp() throws Exception {
     setBuildLanguageOptions(
-        "--experimental_enable_first_class_macros",
         // Let's test the case where input files have proper visibilities by default.
         "--incompatible_no_implicit_file_export");
 
@@ -142,7 +141,7 @@ public final class VisibilityProviderTest extends BuildViewTestCase {
         """
         load("//rules:simple_rule.bzl", "simple_rule")
 
-        def _impl(name):
+        def _impl(name, visibility):
             simple_rule(
                 name = name + "_rule_target",
                 # No implicit input file, because they can only be created outside a symbolic
@@ -201,14 +200,13 @@ public final class VisibilityProviderTest extends BuildViewTestCase {
     // Check the provider of an alias target declared in a BUILD file referencing an actual target
     // in a macro, and vice versa.
     defineSimpleRule();
-    scratch.file("lib/BUILD");
     scratch.file(
         // Put the .bzl in //pkg so we don't have to declare //pkg:__pkg__ in visibility.
         "pkg/macro.bzl",
         """
         load("//rules:simple_rule.bzl", "simple_rule")
 
-        def _impl(name):
+        def _impl(name, visibility):
             simple_rule(
                 name = name + "_actual",
                 visibility = ["//actual_client:__pkg__"])

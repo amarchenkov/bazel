@@ -43,13 +43,13 @@ public class RemoteActionInputFetcher extends AbstractActionInputPrefetcher {
 
   private final String buildRequestId;
   private final String commandId;
-  private final RemoteCache remoteCache;
+  private final CombinedCache combinedCache;
 
   RemoteActionInputFetcher(
       Reporter reporter,
       String buildRequestId,
       String commandId,
-      RemoteCache remoteCache,
+      CombinedCache combinedCache,
       Path execRoot,
       TempPathGenerator tempPathGenerator,
       RemoteOutputChecker remoteOutputChecker,
@@ -64,12 +64,7 @@ public class RemoteActionInputFetcher extends AbstractActionInputPrefetcher {
         outputPermissions);
     this.buildRequestId = Preconditions.checkNotNull(buildRequestId);
     this.commandId = Preconditions.checkNotNull(commandId);
-    this.remoteCache = Preconditions.checkNotNull(remoteCache);
-  }
-
-  @Override
-  public boolean requiresTreeMetadataWhenTreeFileIsInput() {
-    return true;
+    this.combinedCache = Preconditions.checkNotNull(combinedCache);
   }
 
   @Override
@@ -89,21 +84,29 @@ public class RemoteActionInputFetcher extends AbstractActionInputPrefetcher {
       Path tempPath,
       PathFragment execPath,
       FileArtifactValue metadata,
-      Priority priority)
+      Priority priority,
+      Reason reason)
       throws IOException {
     checkArgument(metadata.isRemote(), "Cannot download file that is not a remote file.");
     RequestMetadata requestMetadata =
-        TracingMetadataUtils.buildMetadata(buildRequestId, commandId, "prefetcher", action);
+        TracingMetadataUtils.buildMetadata(
+            buildRequestId,
+            commandId,
+            switch (reason) {
+              case INPUTS -> "input";
+              case OUTPUTS -> "output";
+            },
+            action);
     RemoteActionExecutionContext context = RemoteActionExecutionContext.create(requestMetadata);
 
     Digest digest = DigestUtil.buildDigest(metadata.getDigest(), metadata.getSize());
 
-    return remoteCache.downloadFile(
+    return combinedCache.downloadFile(
         context,
         execPath.getPathString(),
         tempPath,
         digest,
-        new RemoteCache.DownloadProgressReporter(
+        new CombinedCache.DownloadProgressReporter(
             progress -> progress.postTo(reporter, action),
             execPath.toString(),
             digest.getSizeBytes()));

@@ -1,59 +1,620 @@
-## Release 8.0.0-pre.20240826.1 (2024-09-06)
+## Release 8.1.0 (2025-02-13)
 
 ```
-Baseline: 39481ad142469d3ed16d283694c76091b271d523
+
+Release Notes:
+
+```
+
+## Release 9.0.0-pre.20250128.3 (2025-02-11)
+
+```
+Baseline: 8de78b93433fc855fc57a17b7a6c9aee8361367f
+
+Cherry picks:
+
+   + 6303349da6989db35d6d1456d275a0a8ea6d7903:
+     Automated rollback of commit
+     01cb3cd6e05034bcb5616d1850d9aa04424731b3.
+   + e6e8ffaa6dadf45f7b668dc887d7cc81af6a49ff:
+     Automated rollback of commit
+     56bf54716094bf6b687366d20b577435213681d5.
+   + ee12906c5d9a48924db6fc3aba36ccd6d5c7f69e:
+     Prevent use of BuiltinFunction.ArgumentProcessor in
+     Eval.evalCall.
+```
+
+This release contains contributions from many people at Google, as well as Benjamin Peterson, Boleyn Su, dependabot[bot], Fabian Meumertzheim, Kiron, PikachuHy, sarad.
+
+## Release 7.5.0 (2025-01-30)
+
+```
+
+Release Notes:
+
+```
+
+## Release 9.0.0-pre.20250121.1 (2025-01-30)
+
+```
+Baseline: b704fdb18b8201ddfc017ab91b9d0a63892a4cd2
+```
+
+Incompatible changes:
+
+  - Changing `--test_env` no longer invalidates the analysis cache.
+    `ctx.configuration.test_env` may be empty for non-test rules and
+    should not be used by such rules.
+  - The `--enable_bzlmod` and `--enable_workspace` flags are now
+    no-ops. Bzlmod is now always enabled, and WORKSPACE is always
+    disabled.
+
+Important changes:
+
+  - Add a definition of the pacakge_metadata attribute.
+
+This release contains contributions from many people at Google, as well as Taylor Barrella.
+
+## Release 9.0.0-pre.20250115.2 (2025-01-23)
+
+```
+Baseline: 67c89b31f1d40635ad122639c3099ac3d882935d
+
+Cherry picks:
+
+   + cf701ebeab2565e910453cad8b1b950553596d83:
+     Fix performance regression on builds that change a test
+     configuration flag.
 ```
 
 Important changes:
 
-  - Repository rules instantiated in the same module extensions can
-    now refer to each other by their extension-specified names in
-    label attributes.
-
-This release contains contributions from many people at Google, as well as Alessandro Patti, Cornelius Riemenschneider, dependabot[bot], Fabian Meumertzheim, George Gensure, Jay Conrod, Keith Smiley, Michael Siegrist, Xdng Yng, xinyu.wang.
-
-## Release 8.0.0-pre.20240821.2 (2024-08-27)
-
-```
-Baseline: 04f0ef76938057f143562e9faeb2f47defa30939
-
-Cherry picks:
-
-   + 0000000000000000000000000000000000000000:
-     
-```
+  - On Linux, the default limit on the number of `--watchfs` file
+    events per directory has been raised to 10,000 (from 500). If
+    needed, it can be increased further via
+    `--host_jvm_args=-Djdk.nio.file.WatchService.maxEventsPerPoll=<lim
+    it>`.
 
 This release contains contributions from many people at Google, as well as Fabian Meumertzheim.
 
-## Release 8.0.0-pre.20240819.2 (2024-08-22)
+## Release 8.0.1 (2025-01-17)
 
 ```
-Baseline: ffdf41acfd4d82bdfd3f855b8f4aa3840d918eba
+
+Release Notes:
+
+```
+
+## Release 9.0.0-pre.20250109.2 (2025-01-17)
+
+```
+Baseline: 457d248218540b0ae93d6454fa8a95ccad877063
+```
+
+New features:
+
+  - Materializer functions now have access to the label of the rule
+    they are running on as ctx.label .
+
+Important changes:
+
+  - Extra targets provided to `ctx.expand_location` now expand to
+    their executable (if any) instead of resulting in an error if
+    they provide a number of files different from one.
+    RELNOTES[INC]: The `--incompatible_locations_prefers_executable`
+    flag has been added and enabled, which makes it so that
+    `ctx.expand_location` expands `$(locations :x)` to the executable
+    of an extra target `:x` if it provides one and the number of
+    files provided by it is not one.
+
+This release contains contributions from many people at Google, as well as Benjamin Peterson, Fabian Meumertzheim.
+
+## Release 9.0.0-pre.20250106.2 (2025-01-13)
+
+```
+Baseline: fa48bc66e7118ca251c73bdad2c94039f51b5301
+```
+
+Important changes:
+
+  - Baseline coverage files are no longer ignored.
+  - select() on `cpu`, `host_cpu`, or `crosstool_top now emits a
+    "deprecated flag" warning
+  - `--max_idle_secs` now takes system sleep time into account when
+    deciding when to shutdown the blaze server.
+  - Flip --experimental_enable_starlark_set and enable the Starlark
+    set data type by default.
+
+This release contains contributions from many people at Google, as well as Alessandro Patti, Boleyn Su, Eric Riff, Fabian Meumertzheim, Keith Smiley, Kiron, Pareesh Madan, Steve Barrau, Torgil Svensson.
+
+## Release 9.0.0-pre.20241208.2 (2024-12-18)
+
+```
+Baseline: b00576de25ad5eed2af6607f51ad004874079519
 
 Cherry picks:
 
-   + 0000000000000000000000000000000000000000:
-     
+   + a8e2c58656383f12dcee7125b8bd123bcec3428d:
+     Throw toolchain resolution error (as EvalError) instead of
+     IllegalStateException if create_compile_action() is called for
+     an action that isn't configured for the toolchain.
 ```
 
-This release contains contributions from many people at Google, as well as dependabot[bot], Fabian Meumertzheim, Jordan Mele, Jordan Mele.
+This release contains contributions from many people at Google, as well as .
 
-## Release 8.0.0-pre.20240814.2 (2024-08-20)
+## Release 9.0.0-pre.20241208.1 (2024-12-16)
 
 ```
-Baseline: 9d86712432fa7c6276ad5620a3185557631f36f1
+Baseline: b00576de25ad5eed2af6607f51ad004874079519
+```
+
+Important changes:
+
+  - Changing any part of --run_under that isn't the label (such as
+    the shell command) no longer invalidates the analysis cache.
+
+This release contains contributions from many people at Google, as well as Fabian Meumertzheim, Keith Smiley.
+
+## Release 9.0.0-pre.20241205.2 (2024-12-12)
+
+```
+Baseline: 41557184fedc704037897226f8d255dda0780c55
 
 Cherry picks:
 
-   + 0000000000000000000000000000000000000000:
-     
+   + a1d1902e07adaad8be3d46a44fa42b2e9b150c1a:
+     Fix `EmptyRuleConfiguredTargetFactory` for native rules that are
+     not instances of `EmptyRule`
 ```
+
+Incompatible changes:
+
+  - The legacy `@bazel_tools//tools/build_defs/repo:maven_rules.bzl`
+    rule for downloading Maven artifacts has been deleted. Consider
+    migrating to rules_jvm_external if you are using this rule.
+
+Important changes:
+
+  - Fix starlark_doc_extract proto output for symbolic macro
+    visibility,
+    attribute inheritance, and rule finalizers; and remove
+    non-existent "name"
+    attribute from starlark_doc_extract output for aspects.
+  - Java tests are no longer run with a `SecurityManager` that
+    prevents `System.exit`, since `SecurityManager` functionality is
+    being removed from the JDK.
+
+This release contains contributions from many people at Google, as well as Fabian Meumertzheim, Keith Lea, Keith Smiley, Lucas Loffel, Sara Adams, Xdng Yng.
+
+## Release 8.0.0 (2024-12-09)
+
+```
+
+Release Notes:
+
+```
+
+## Release 9.0.0-pre.20241125.4 (2024-12-07)
+
+```
+Baseline: 7b20da28ec69e3921a043199e6d0afb0246e71f0
+
+Cherry picks:
+
+   + e27ab916aaa6b12f2be4e463a54ef49965cc04a7:
+     Automated rollback of commit
+     3fdec931bfc401a379e2446731cf19daffe24a10.
+   + 17f3cbc33a1dc0b68479f1f1a25ab832f6322842:
+     Automated rollback of commit
+     8f74d8f4de7ba474adad59769241bb38ee83d3ab.
+   + bae909caf645559ba958a279a834e6a11ac5eae6:
+     Release 9.0.0-pre.20241125.4 (2024-12-07)
+   + 291dad6d529082d967753e23c667093ec87322c0:
+     Release 9.0.0-pre.20241125.4 (2024-12-07)
+   + 5d4705148b2a7b10b6c0cf12b0acf127625cda1b:
+     Release 9.0.0-pre.20241125.4 (2024-12-07)
+```
+
+This release contains contributions from many people at Google, as well as .
+
+## Release 9.0.0-pre.20241125.4 (2024-12-07)
+
+```
+Baseline: 7b20da28ec69e3921a043199e6d0afb0246e71f0
+
+Cherry picks:
+
+   + e27ab916aaa6b12f2be4e463a54ef49965cc04a7:
+     Automated rollback of commit
+     3fdec931bfc401a379e2446731cf19daffe24a10.
+   + 17f3cbc33a1dc0b68479f1f1a25ab832f6322842:
+     Automated rollback of commit
+     8f74d8f4de7ba474adad59769241bb38ee83d3ab.
+   + bae909caf645559ba958a279a834e6a11ac5eae6:
+     Release 9.0.0-pre.20241125.4 (2024-12-07)
+   + 291dad6d529082d967753e23c667093ec87322c0:
+     Release 9.0.0-pre.20241125.4 (2024-12-07)
+```
+
+This release contains contributions from many people at Google, as well as .
+
+## Release 9.0.0-pre.20241125.4 (2024-12-07)
+
+```
+Baseline: 7b20da28ec69e3921a043199e6d0afb0246e71f0
+
+Cherry picks:
+
+   + e27ab916aaa6b12f2be4e463a54ef49965cc04a7:
+     Automated rollback of commit
+     3fdec931bfc401a379e2446731cf19daffe24a10.
+   + 17f3cbc33a1dc0b68479f1f1a25ab832f6322842:
+     Automated rollback of commit
+     8f74d8f4de7ba474adad59769241bb38ee83d3ab.
+```
+
+This release contains contributions from many people at Google, as well as .
+
+## Release 9.0.0-pre.20241125.3 (2024-12-04)
+
+```
+Baseline: 7b20da28ec69e3921a043199e6d0afb0246e71f0
+
+Cherry picks:
+
+   + e27ab916aaa6b12f2be4e463a54ef49965cc04a7:
+     Automated rollback of commit
+     3fdec931bfc401a379e2446731cf19daffe24a10.
+   + d699813bb7120f2b80886763ddc1d1b01805db9b:
+     Release 9.0.0-pre.20241125.3 (2024-12-04)
+   + 0ee3d20da076a7e221ebe53a41ab3d7a60db23a6:
+     Release 9.0.0-pre.20241125.3 (2024-12-04)
+   + 08b47315d87033a38feb56e68a4fac99c9788af2:
+     Release 9.0.0-pre.20241125.3 (2024-12-04)
+   + 6c25f89955ad56c351e2b69a5dedb612f7dd45c2:
+     Release 9.0.0-pre.20241125.3 (2024-12-04)
+```
+
+This release contains contributions from many people at Google, as well as .
+
+## Release 9.0.0-pre.20241125.3 (2024-12-04)
+
+```
+Baseline: 7b20da28ec69e3921a043199e6d0afb0246e71f0
+
+Cherry picks:
+
+   + e27ab916aaa6b12f2be4e463a54ef49965cc04a7:
+     Automated rollback of commit
+     3fdec931bfc401a379e2446731cf19daffe24a10.
+   + d699813bb7120f2b80886763ddc1d1b01805db9b:
+     Release 9.0.0-pre.20241125.3 (2024-12-04)
+   + 0ee3d20da076a7e221ebe53a41ab3d7a60db23a6:
+     Release 9.0.0-pre.20241125.3 (2024-12-04)
+```
+
+This release contains contributions from many people at Google, as well as .
+
+## Release 9.0.0-pre.20241125.3 (2024-12-04)
+
+```
+Baseline: 7b20da28ec69e3921a043199e6d0afb0246e71f0
+
+Cherry picks:
+
+   + e27ab916aaa6b12f2be4e463a54ef49965cc04a7:
+     Automated rollback of commit
+     3fdec931bfc401a379e2446731cf19daffe24a10.
+```
+
+Important changes:
+
+  - `archive_override` now accepts all attributes usable with
+    `http_archive`; similar for `git_override` and `git_repository`.
+  - Fixed an issue where `genquery` in external repos would evaluate
+    labels as if they were in the main repo.
+  - Re-enable symbolic macro attribute inheritance.
+
+This release contains contributions from many people at Google, as well as Fabian Meumertzheim, Jordan Mele, Simon Thornington, Ulrik Falklof, Xdng Yng, Xudong Yang.
+
+## Release 9.0.0-pre.20241119.2 (2024-11-27)
+
+```
+Baseline: ebeab8ce6607f0ea8448178219c61a935535be6a
+
+Cherry picks:
+
+   + 650142fbe290d97e39b702d1dbcdbe126614b927:
+     Automated rollback of commit
+     4515bb6c932ce62c7889cf322319a3b49158acad.
+   + 4754de207c4dd05c531b57847e3a47bea229954a:
+     [Rolling release] Do not forward legacy `cmd.exe` variables to
+     the server (#24500)
+   + 94fb35b0af7d30b5479bfdb40cae51960a50f24c:
+     Fix rolling release (#24513)
+```
+
+Incompatible changes:
+
+  - Changing --test_env no longer invalidates the analysis cache.
+    `ctx.configuration.test_env` may be empty for non-test rules and
+    should not be used by such rules.
+
+Important changes:
+
+  - Add a set data type to Starlark, guarded by the
+    --experimental_enable_starlark_set flag.
+  - symbolic macro attribute inheritance is now marked experimental;
+    set --experimental_enable_macro_inherit_attrs flag to enable it.
+  - Changing any part of `--run_under` that isn't the label (such as
+    the shell command) no longer invalidates the analysis cache.
+  - The progress of completed configured aspects is now shown in the
+    UI, next to the number of completed targets. Example: "(100
+    packages loaded, 10000 targets and 500 aspects configured)".
+
+This release contains contributions from many people at Google, as well as Fabian Meumertzheim, kalvdans, Xùdōng Yáng.
+
+## Release 9.0.0-pre.20241113.4 (2024-11-20)
+
+```
+Baseline: 8d02d476f0a1ccc5bfcc47b2dd9ac17526c4d0fb
+
+Cherry picks:
+
+   + 04871da8478a9ce713a0c08b442a686bed61c7c9:
+     Use LinkedHashSet instead of HashSet in
+     CcCompilationContext.Builder for determinism
+   + aa5d821c58d8b20ba55365b32d1bccc3235eb70a:
+     Automated rollback of commit
+     7ffa08e649a57728a642fb1643396678ea2032a8.
+   + 08beb210eddd35b703857e005d99c60b963e8e10:
+     Put macro attribute inheritance behind an off-by-default
+     --experimental_enable_macro_inherit_attrs flag
+   + f8e1588bb3ae7f46ded713e129c6eff63d76d107:
+     Update `with_cfg.bzl` to v0.6.0
+```
+
+Incompatible changes:
+
+  - On Windows, a change to the output base locking protocol might
+    cause an older Bazel invoked immediately after a newer Bazel (on
+    the same output base) to error out instead of blocking for the
+    lock, even if --block_for_lock is enabled.
+  - The `--watchfs` startup option is now a no-op and will be removed
+    in April 2025. Use the `--watchfs` command option instead.
+  - The mnemonic passed to --worker_extra_flag is now matched against
+    the worker key mnemonic when one is available, instead of the
+    action mnemonic. This makes it consistent with other worker flags
+    taking a mnemonic.
+
+New features:
+
+  - The "blaze --quiet" command line option can now be used to make
+    Blaze emit much less output.
+  - REPO.bazel now allows another directive, "ignore_directories()".
+    It takes a list of directories to ignore just like .bazelignore
+    does, but with glob semantics.
+  - Commands executed by "bazel run" now have two extra environment
+    variables: $BUILD_ID indicates the id of the Bazel command and
+    $BUILD_EXECROOT indicates the execroot of the Bazel server.
+
+Important changes:
+
+  - The stripPrefix parameter of repository_ctx.download_and_extract()
+    and repository_ctx.extract() has been renamed to strip_prefix;
+    the deprecated
+    stripPrefix name remains usable for compatibility.
+  - A no-config transition is now available as `config.no_config()`.
+  - Actions that create runfiles trees are now considered regular
+    actions. This means that they are now reported in statistics,
+    critical paths and the like.
+  - External repositories that are managed by Bzlmod can now contain
+    a top-level `external` directory or package.
+  - `repository_ctx.execute` can now remove an environment variable
+    when executing a process by associating it with the value `None`
+    in the `environment` argument.
+  - Add inherit_attrs param to macro() to allow symbolic macros to
+    inherit attributes from rules or other symbolic macros.
+  - `bazel mod` now tries to evaluate all module extensions, even
+    when some have failed to evaluate.
+  - The new `--inject_repository` flag can be used to add new
+    repositories via the CLI with `--enable_bzlmod`. Such
+    repositories behave as if they were declared by
+    `local_repository` via `use_repo_rule` in the root module.
+  - symbolic macro attribute inheritance is now marked experimental;
+    set --experimental_enable_macro_inherit_attrs flag to enable it.
+
+This release contains contributions from many people at Google, as well as Alexander Golovlev, Benson Muite, Cornelius Riemenschneider, dependabot[bot], Dimi Shahbaz, Fabian Meumertzheim, Farid Zakaria, Honnix, Jay Conrod, John Millikin, Keith Smiley, Matt Brown, Richard Woodbury, Roman Salvador, Rostislav Rumenov, Wojciech Mazur, Xdng Yng, Zhongpeng Lin.
+
+## Release 7.4.1 (2024-11-11)
+
+```
+
+Release Notes:
+
+```
+
+## Release 9.0.0-pre.20241016.1 (2024-10-22)
+
+```
+Baseline: 253fedc5d5adbb6015735b31103be584e2125d5b
+```
+
+Incompatible changes:
+
+  - With the default Unix toolchain on macOS, binaries now use
+    `@rpath` to find their `.dylib` dependencies. This is required to
+    fix issues where tools run during the build couldn't find their
+    dynamic dependencies.
+  - The flag `--incompatible_disallow_empty_glob` now defaults to
+    true.
+
+Important changes:
+
+  - Native android_sdk is no longer available within Bazel. Use
+    https://github.com/bazelbuild/rules_android
+  - Add the
+    --incompatible_simplify_unconditional_selects_in_rule_attrs
+    option to simplify configurable rule attributes which contain
+    only unconditional selects; for example, if ["a"] +
+    select("//conditions:default", ["b"]) is assigned to a rule
+    attribute, it is stored as ["a", "b"].
+  - `--incompatible_disallow_unsound_directory_outputs` is deleted.
+  - `--incompatible_remote_symlinks` and
+    `--incompatible_remote_dangling_symlinks` are deleted.
+  - The default value of
+    `--experimental_remote_cache_eviction_retries` is changed to `5`.
+  - If --proto:rule_classes flag is enabled, query proto output will
+    contain rule class definitions in Stardoc proto format.
+  - Non-singleton target visibility lists can now contain
+    "//visibility:public" and "//visibility:private" elements; the
+    result is appropriately simplified when assigned to an attribute:
+    ["//foo:__subpackages__", "//visibility:public"] is saved as
+    ["//visibility:public"], ["//foo:__subpackages__",
+    "//visibility:private"] is saved as ["//foo:__subpackages__"],
+    and for consistency's sake, an empty target visibility list [] is
+    saved as ["//visibility:private"].
+  - Symbolic Macros -- and with them, Finalizers and the new
+    Macro-Aware Visibility model -- are now generally available
+    (`--experimental_enable_first_class_macros` now defaults to
+    true). Trivial `select()` values are automatically unwrapped
+    (`--incompatible_simplify_unconditional_selects_in_rule_attrs`
+    now defaults to true).
+  - Moved all Bazel Android tool and action code to rules_android.
+  - Add conlyopts and cxxopts attributes to cc rules
+  - `@bazel_tools//tools/android` no longer exists. Use
+    https://github.com/bazelbuild/rules_android instead.
+  - Bazel now supports all characters in the rlocation and target
+    paths of runfiles and can be run from workspaces with a space in
+    their full path.
+  - The Python six library is no longer part of @external_tools.
+
+This release contains contributions from many people at Google, as well as Alessandro Patti, Benjamin Peterson, CaerusKaru, Dennis van den Berg, dependabot[bot], Fabian Meumertzheim, Fredrik Medley, hvd, Keith Smiley, Maria, Mislav Mandaric, Tomasz Pasternak, Xavier Bonaventura, Xdng Yng, Xùdōng Yáng.
+
+## Release 8.0.0-pre.20240925.4 (2024-10-03)
+
+```
+Baseline: f4d92d45be3617b72c21ad5ce8912fa548472e50
+
+Cherry picks:
+
+   + 99434b16ba41677b92f7eb79d5d8dcb1130d7c47:
+     Automated rollback of commit
+     4607ad439fe8869c8e8951d953e2d3adb613e6d6.
+```
+
+Incompatible changes:
+
+  - `ctx.resolve_tools` is no longer available by default, in
+    preparation for complete removal. See
+    https://github.com/bazelbuild/bazel/issues/22249 for migration
+    instructions. Use `--noincompatible_disallow_ctx_resolve_tools`
+    to temporarily make it available again.
+  - The `aquery` command now reports all potential inputs of actions
+    that support input discovery, including the input headers of C++
+    compilation actions and those explicitly marked as unused through
+    the `unused_inputs_list` argument to `ctx.actions.run`. Set
+    `--noinclude_pruned_inputs` to omit pruned inputs from `aquery`
+    output when running it after action execution.
+    RELNOTES[INC]: This is not a release note, but a reminder to
+    remove the note for `--include_scheduling_dependencies`, which
+    was introduced in the 8.x tree but won't make it into the final
+    release.
+  - `--zip_undeclared_test_outputs` now defaults to false, causing
+    undeclared test outputs (i.e., files written to
+    `$TEST_UNDECLARED_OUTPUTS_DIR` by a test) to be produced as a
+    directory instead of a zip file.
+  - --legacy_important_outputs is flipped to false. See #14353 for
+    details
+
+New features:
+
+  - Bazel can now parse .scl files, a dialect of Starlark without
+    Bazel-specific symbols.
+  - Dormant dependencies and materializer functions are now available
+    with the --experimental_dormant_deps flag.
 
 Important changes:
 
   - Deleted native Android mobile-install
+  - Repository rules instantiated in the same module extensions can
+    now refer to each other by their extension-specified names in
+    label attributes.
+  - A new experimental flag,
+    `--experimental_build_event_output_group_mode`, allows users to
+    change how a given output group's files are reported in BEP. The
+    current behavior is `FILESET` which populates
+    `OutputGroup.file_sets`. Users may now specify `INLINE` to
+    instead report files directly in the
+    `TargetComplete`/`AspectComplete` event under
+    `OutputGroup.inline_files`. Users may also specify `BOTH` to
+    populate `OutputGroup.file_sets` and `OutputGroup.inline_files`.
+  - Bazel no longer has the android_binary, android_library,
+    android_device_script_fixture and android_host_service_fixture
+    rules. Use https://github.com/bazelbuild/rules_android instead.
+    See https://github.com/bazelbuild/bazel/issues/23199
+  - Bazel no longer has the android_sdk_repository rule. Use
+    https://github.com/bazelbuild/rules_android instead.
+  - Uploading local action results to a disk or remote cache now
+    occurs in the background whenever possible, potentially
+    unblocking the execution of followup actions. Set
+    `--noremote_cache_async` to revert to the previous behavior.
+  - `--incompatible_remote_downloader_send_all_headers` is removed.
+  - `--build_event_upload_max_threads` is removed.
+  - `incompatible_remote_output_paths_relative_to_input_root` is
+    removed.
+  - The default value of
+    `--experimental_remote_cache_compression_threshold` is changed to
+    `100`.
+  - Build without the Bytes is disabled when using HTTP cache.
+  - Build without the Bytes is disabled when using HTTP cache.
+  - Symlink trees are now created through direct filesystem calls by
+    default, instead of delegated to a helper process. On Windows,
+    this entails respecting the `--windows_enable_symlinks` flag,
+    falling back to a copy when the flag is unset (the helper process
+    always attempts to create symlinks, irrespective of the flag).
+    Set `--noexperimental_inprocess_symlink_creation` to temporarily
+    revert to the previous behavior, which will be removed in a
+    future release.
+  - By default, coverage artifacts will be reported inline in the
+    `TargetComplete` event. To disable this behavior, pass
+    `--experimental_build_event_output_group_mode=baseline.lcov=named_
+    set_of_files_only`.
+  - Uploading local action results to a disk or remote cache now
+    occurs in the background whenever possible, potentially
+    unblocking the execution of followup actions. Set
+    `--noremote_cache_async` to revert to the previous behavior.
+  - Overrides in the root MODULE.bazel file are now ignored with
+    `--ignore_dev_dependency`. (Overrides in non-root modules are
+    already ignored.)
+  - Added support for using a remote cache that evicts blobs and
+    doesn't have AC integrity check (e.g. HTTP cache).
+  - Undeclared test outputs are now reported individually in the BEP,
+    unless zipping is enabled via `--zip_undeclared_test_outputs`.
+  - The native version of android_tools_defaults_jar is no longer in
+    Bazel. Use https://github.com/bazelbuild/rules_android instead.
+  - Bazel fetch and vendor command now supports --target_pattern_file
+    for specifying target patterns.
+  - The compact execution log now stores runfiles in a more compact
+    representation that should reduce the memory overhead and log
+    output size, in particular for test spawns. This change required
+    breaking changes to the (experimental) log format.
+  - `override_repo` and `inject_repo` can be used to override and
+    inject repos in module extensions.
+  - Patches to the module file in `single_version_override` are now
+    effective as long as the patch file lies in the root module.
+  - If `--allowed_cpu_values` is set, the `--cpu` flag value is
+    validated against it.
 
-This release contains contributions from many people at Google, as well as Fabian Meumertzheim, Javier Maestro.
+This release contains contributions from many people at Google, as well as Adam Azarchs, Alessandro Patti, Benjamin Peterson, Cornelius Riemenschneider, dependabot[bot], Fabian Meumertzheim, Fil-Den, George Gensure, hvd, Jacob Van De Weert, James Sharpe, Javier Maestro, Jay Conrod, John Millikin, Jordan Mele, Jordan Mele, Keith Smiley, Lior Gorelik, Luis Padron, Michael Siegrist, Nils Wireklint, PikachuHy, Sangita.Nalkar, Son Luong Ngoc, Thi Doan, Xdng Yng, xinyu.wang.
+
+## Release 7.3.2 (2024-10-01)
+
+```
+
+Release Notes:
+
+```
 
 ## Release 7.3.1 (2024-08-19)
 

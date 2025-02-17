@@ -14,8 +14,8 @@
 package com.google.devtools.build.lib.rules.java;
 
 import static com.google.devtools.build.lib.rules.java.JavaStarlarkCommon.checkPrivateAccess;
+import static java.util.Objects.requireNonNull;
 
-import com.google.auto.value.AutoValue;
 import com.google.common.base.Ascii;
 import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableList;
@@ -32,6 +32,7 @@ import com.google.devtools.build.lib.collect.nestedset.Depset;
 import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.concurrent.ThreadSafety.Immutable;
 import com.google.devtools.build.lib.packages.BuiltinRestriction;
+import com.google.devtools.build.lib.skyframe.serialization.autocodec.AutoCodec;
 import com.google.devtools.build.lib.starlarkbuildapi.java.JavaConfigurationApi;
 import java.util.Map;
 import javax.annotation.Nullable;
@@ -76,7 +77,6 @@ public final class JavaConfiguration extends Fragment implements JavaConfigurati
   private final boolean generateJavaDeps;
   private final OneVersionEnforcementLevel enforceOneVersion;
   private final boolean enforceOneVersionOnJavaTests;
-  private final boolean allowRuntimeDepsOnNeverLink;
   private final JavaClasspathMode javaClasspath;
   private final boolean inmemoryJdepsFiles;
   private final ImmutableList<String> defaultJvmFlags;
@@ -93,7 +93,6 @@ public final class JavaConfiguration extends Fragment implements JavaConfigurati
   private final boolean explicitJavaTestDeps;
   private final boolean addTestSupportToCompileTimeDeps;
   private final ImmutableList<Label> pluginList;
-  private final boolean disallowResourceJars;
   private final boolean experimentalTurbineAnnotationProcessing;
   private final boolean experimentalEnableJspecify;
   private final boolean multiReleaseDeployJars;
@@ -123,9 +122,7 @@ public final class JavaConfiguration extends Fragment implements JavaConfigurati
     this.enforceProguardFileExtension = javaOptions.enforceProguardFileExtension;
     this.enforceOneVersion = javaOptions.enforceOneVersion;
     this.enforceOneVersionOnJavaTests = javaOptions.enforceOneVersionOnJavaTests;
-    this.allowRuntimeDepsOnNeverLink = javaOptions.allowRuntimeDepsOnNeverLink;
     this.explicitJavaTestDeps = javaOptions.explicitJavaTestDeps;
-    this.disallowResourceJars = javaOptions.disallowResourceJars;
     this.addTestSupportToCompileTimeDeps = javaOptions.addTestSupportToCompileTimeDeps;
     this.runAndroidLint = javaOptions.runAndroidLint;
     this.multiReleaseDeployJars = javaOptions.multiReleaseDeployJars;
@@ -270,21 +267,6 @@ public final class JavaConfiguration extends Fragment implements JavaConfigurati
     return defaultJvmFlags;
   }
 
-  public StrictDepsMode getStrictJavaDeps() {
-    return strictJavaDeps;
-  }
-
-  public StrictDepsMode getFilteredStrictJavaDeps() {
-    StrictDepsMode strict = getStrictJavaDeps();
-    switch (strict) {
-      case STRICT:
-      case DEFAULT:
-        return StrictDepsMode.ERROR;
-      default: // OFF, WARN, ERROR
-        return strict;
-    }
-  }
-
   /** Which tool to use for fixing dependency errors. */
   public String getFixDepsTool() {
     return fixDepsTool;
@@ -336,15 +318,16 @@ public final class JavaConfiguration extends Fragment implements JavaConfigurati
   }
 
   /** Stores a String name and an optional associated label. */
-  @AutoValue
-  public abstract static class NamedLabel {
-    public static NamedLabel create(String name, Optional<Label> label) {
-      return new AutoValue_JavaConfiguration_NamedLabel(name, label);
+  @AutoCodec
+  public record NamedLabel(String name, Optional<Label> label) {
+    public NamedLabel {
+      requireNonNull(name, "name");
+      requireNonNull(label, "label");
     }
 
-    public abstract String name();
-
-    public abstract Optional<Label> label();
+    public static NamedLabel create(String name, Optional<Label> label) {
+      return new NamedLabel(name, label);
+    }
   }
 
   /** Returns bytecode optimizer to run. */
@@ -452,10 +435,6 @@ public final class JavaConfiguration extends Fragment implements JavaConfigurati
     return enforceOneVersionOnJavaTests;
   }
 
-  public boolean getAllowRuntimeDepsOnNeverLink() {
-    return allowRuntimeDepsOnNeverLink;
-  }
-
   @Override
   public boolean addTestSupportToCompileTimeDeps() {
     return addTestSupportToCompileTimeDeps;
@@ -469,10 +448,6 @@ public final class JavaConfiguration extends Fragment implements JavaConfigurati
   @Override
   public ImmutableList<Label> getPlugins() {
     return pluginList;
-  }
-
-  public boolean disallowResourceJars() {
-    return disallowResourceJars;
   }
 
   public boolean experimentalTurbineAnnotationProcessing() {

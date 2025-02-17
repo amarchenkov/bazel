@@ -2,7 +2,7 @@
 #   A grab-bag of testing utilities.
 
 load("@bazel_skylib//rules:write_file.bzl", "write_file")
-load("@rules_java//java:defs.bzl", "java_library", "java_test")
+load("@rules_java//java:defs.bzl", "java_binary", "java_library", "java_test")
 load("//src/tools/bzlmod:blazel_utils.bzl", "get_canonical_repo_name")
 
 package(
@@ -58,6 +58,7 @@ java_library(
         "//src/main/java/com/google/devtools/build/lib/analysis:rule_definition_environment",
         "//src/main/java/com/google/devtools/build/lib/analysis:template_variable_info",
         "//src/main/java/com/google/devtools/build/lib/analysis:transitive_info_provider",
+        "//src/main/java/com/google/devtools/build/lib/bazel/repository/starlark",
         "//src/main/java/com/google/devtools/build/lib/clock",
         "//src/main/java/com/google/devtools/build/lib/cmdline",
         "//src/main/java/com/google/devtools/build/lib/collect/nestedset",
@@ -67,6 +68,7 @@ java_library(
         "//src/main/java/com/google/devtools/build/lib/rules/core",
         "//src/main/java/com/google/devtools/build/lib/rules/platform",
         "//src/main/java/com/google/devtools/build/lib/skyframe:bzl_load_value",
+        "//src/main/java/com/google/devtools/build/lib/starlarkbuildapi/repository",
         "//src/main/java/com/google/devtools/build/lib/util",
         "//src/main/java/com/google/devtools/build/lib/util:filetype",
         "//src/main/java/com/google/devtools/build/lib/util:os",
@@ -75,6 +77,7 @@ java_library(
         "//src/main/java/com/google/devtools/build/lib/vfs",
         "//src/main/java/com/google/devtools/build/lib/vfs:pathfragment",
         "//src/main/java/com/google/devtools/build/lib/vfs/inmemoryfs",
+        "//src/main/java/net/starlark/java/eval",
         "//src/main/java/net/starlark/java/syntax",
         "//src/main/protobuf:failure_details_java_proto",
         "//third_party:error_prone_annotations",
@@ -133,6 +136,31 @@ java_library(
 )
 
 java_library(
+    name = "external_file_system_lock",
+    srcs = ["ExternalFileSystemLock.java"],
+    data = [":external_file_system_lock_helper"],
+    deps = [
+        "//src/main/java/com/google/devtools/build/lib/shell",
+        "//src/main/java/com/google/devtools/build/lib/util:os",
+        "//src/main/java/com/google/devtools/build/lib/vfs",
+        "//third_party:guava",
+        "@rules_java//java/runfiles",
+    ],
+)
+
+java_binary(
+    name = "external_file_system_lock_helper",
+    srcs = ["ExternalFileSystemLockHelper.java"],
+    jvm_flags = [
+        # Prevent the JVM from polluting stdout and interfere with communication with the parent.
+        "-Xlog:disable",
+        "-Xlog:all=warning:stderr",
+    ],
+    main_class = "com.google.devtools.build.lib.testutil.ExternalFileSystemLockHelper",
+    deps = ["//third_party:guava"],
+)
+
+java_library(
     name = "spawn_controller",
     srcs = ["SpawnController.java"],
     deps = [
@@ -153,6 +181,7 @@ java_library(
         "//src/main/java/com/google/devtools/build/lib/actions:artifact_expander",
         "//src/main/java/com/google/devtools/build/lib/actions:artifacts",
         "//src/main/java/com/google/devtools/build/lib/actions:fileset_output_symlink",
+        "//src/main/java/com/google/devtools/build/lib/actions:fileset_output_tree",
         "//src/main/java/com/google/devtools/build/lib/vfs",
         "//third_party:guava",
     ],
@@ -201,6 +230,7 @@ java_library(
     name = "TestUtils",
     srcs = ["TestUtils.java"],
     deps = [
+        "//src/main/java/com/google/devtools/build/lib/util:string_encoding",
         "//src/main/java/com/google/devtools/build/lib/vfs",
         "//src/main/java/com/google/devtools/build/lib/vfs:pathfragment",
         "//third_party:jsr305",
@@ -336,7 +366,6 @@ java_library(
         "//src/main/java/com/google/devtools/build/lib/actions",
         "//src/main/java/com/google/devtools/build/lib/actions:artifact_expander",
         "//src/main/java/com/google/devtools/build/lib/actions:artifacts",
-        "//src/main/java/com/google/devtools/build/lib/actions:middleman_type",
         "//src/main/java/com/google/devtools/build/lib/analysis/platform",
         "//src/main/java/com/google/devtools/build/lib/collect/nestedset",
         "//src/main/java/net/starlark/java/syntax",

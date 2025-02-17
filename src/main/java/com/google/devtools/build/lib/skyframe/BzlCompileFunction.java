@@ -22,6 +22,7 @@ import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.events.Event;
 import com.google.devtools.build.lib.packages.AutoloadSymbols;
 import com.google.devtools.build.lib.packages.BazelStarlarkEnvironment;
+import com.google.devtools.build.lib.packages.semantics.BuildLanguageOptions;
 import com.google.devtools.build.lib.vfs.FileSystemUtils;
 import com.google.devtools.build.lib.vfs.Path;
 import com.google.devtools.build.lib.vfs.RootedPath;
@@ -161,7 +162,7 @@ public class BzlCompileFunction implements SkyFunction {
 
       // Takes into account --incompatible_autoload_externally, similarly to the comment above, this
       // only defines the correct set of symbols, but does not load them yet.
-      AutoloadSymbols autoloadSymbols = PrecomputedValue.AUTOLOAD_SYMBOLS.get(env);
+      AutoloadSymbols autoloadSymbols = AutoloadSymbols.AUTOLOAD_SYMBOLS.get(env);
       if (autoloadSymbols == null) {
         return null;
       }
@@ -169,7 +170,19 @@ public class BzlCompileFunction implements SkyFunction {
     }
 
     // We have all deps. Parse, resolve, and return.
-    ParserInput input = ParserInput.fromLatin1(bytes, inputName);
+    ParserInput input;
+    try {
+      input =
+          StarlarkUtil.createParserInput(
+              bytes,
+              inputName,
+              semantics.get(BuildLanguageOptions.INCOMPATIBLE_ENFORCE_STARLARK_UTF8),
+              env.getListener());
+    } catch (
+        @SuppressWarnings("UnusedException") // createParserInput() reports its own error message
+        StarlarkUtil.InvalidUtf8Exception e) {
+      return BzlCompileValue.noFile("compilation of '%s' failed", inputName);
+    }
     FileOptions options =
         FileOptions.builder()
             // By default, Starlark load statements create file-local bindings.

@@ -19,6 +19,7 @@ import com.google.devtools.build.docgen.annot.GlobalMethods;
 import com.google.devtools.build.docgen.annot.GlobalMethods.Environment;
 import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.packages.semantics.BuildLanguageOptions;
+import java.util.List;
 import javax.annotation.Nullable;
 import net.starlark.java.annot.Param;
 import net.starlark.java.annot.ParamType;
@@ -124,10 +125,14 @@ public interface StarlarkNativeModuleApi extends StarlarkValue {
               + " whose default value is computed are excluded from the result. (Computed defaults"
               + " cannot be computed until the analysis phase.).</li>" //
               + "</ul>" //
-              + "<p>If possible, avoid using this function. It makes BUILD files brittle and"
-              + " order-dependent. Also, beware that it differs subtly from the two"
-              + " other conversions of rule attribute values from internal form to Starlark: one"
-              + " used by computed defaults, the other used by <code>ctx.attr.foo</code>.",
+              + "<p>If possible, use this function only in <a"
+              + " href=\"https://bazel.build/extending/macros#finalizers\">implementation functions"
+              + " of rule finalizer symbolic macros</a>. Use of this function in other contexts is"
+              + " not recommened, and will be disabled in a future Bazel release; it makes"
+              + " <code>BUILD</code> files brittle and order-dependent. Also, beware that it"
+              + " differs subtly from the two other conversions of rule attribute values from"
+              + " internal form to Starlark: one used by computed defaults, the other used by"
+              + " <code>ctx.attr.foo</code>.",
       parameters = {@Param(name = "name", doc = "The name of the target.")},
       useStarlarkThread = true)
   Object existingRule(String name, StarlarkThread thread) throws EvalException;
@@ -143,8 +148,11 @@ public interface StarlarkNativeModuleApi extends StarlarkValue {
               + " <code>x</code> supporting dict-like iteration, <code>len(x)</code>, <code>name in"
               + " x</code>, <code>x[name]</code>, <code>x.get(name)</code>, <code>x.items()</code>,"
               + " <code>x.keys()</code>, and <code>x.values()</code>." //
-              + "<p><em>Note: If possible, avoid using this function. It makes BUILD files brittle"
-              + " and order-dependent.",
+              + "<p>If possible, use this function only in <a"
+              + " href=\"https://bazel.build/extending/macros#finalizers\">implementation functions"
+              + " of rule finalizer symbolic macros</a>. Use of this function in other contexts is"
+              + " not recommened, and will be disabled in a future Bazel release; it makes"
+              + " <code>BUILD</code> files brittle and order-dependent.",
       useStarlarkThread = true)
   Object existingRules(StarlarkThread thread) throws EvalException;
 
@@ -228,6 +236,15 @@ public interface StarlarkNativeModuleApi extends StarlarkValue {
               + "<code>package_name()</code> will match the caller BUILD file package.",
       useStarlarkThread = true)
   String packageName(StarlarkThread thread) throws EvalException;
+
+  @StarlarkMethod(
+      name = "package_default_visibility",
+      doc =
+          "Returns the default visibility of the package being evaluated. This is the value of the"
+              + " <code>default_visibility</code> parameter of <code>package()</code>, extended to"
+              + " include the package itself.",
+      useStarlarkThread = true)
+  List<Label> packageDefaultVisibility(StarlarkThread thread) throws EvalException;
 
   @StarlarkMethod(
       name = "repository_name",

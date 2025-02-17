@@ -19,7 +19,6 @@ import com.google.common.base.Preconditions;
 import com.google.common.base.Supplier;
 import com.google.common.base.Suppliers;
 import com.google.devtools.build.lib.analysis.config.BuildOptions;
-import com.google.devtools.build.lib.packages.AutoloadSymbols;
 import com.google.devtools.build.lib.packages.Package.ConfigSettingVisibilityPolicy;
 import com.google.devtools.build.lib.packages.RuleVisibility;
 import com.google.devtools.build.lib.pkgcache.PathPackageLocator;
@@ -85,10 +84,6 @@ public final class PrecomputedValue implements SkyValue {
   public static final Precomputed<StarlarkSemantics> STARLARK_SEMANTICS =
       new Precomputed<>("starlark_semantics");
 
-  // Configuration of  --incompatible_load_externally
-  public static final Precomputed<AutoloadSymbols> AUTOLOAD_SYMBOLS =
-      new Precomputed<>("autoload_symbols");
-
   public static final Precomputed<UUID> BUILD_ID =
       new Precomputed<>("build_id", /* shareable= */ false);
 
@@ -105,6 +100,10 @@ public final class PrecomputedValue implements SkyValue {
   // Unsharable because of complications in deserializing BuildOptions on startup due to caching.
   public static final Precomputed<BuildOptions> BASELINE_CONFIGURATION =
       new Precomputed<>("baseline_configuration", /*shareable=*/ false);
+
+  // Unsharable because of complications in deserializing BuildOptions on startup due to caching.
+  public static final Precomputed<BuildOptions> BASELINE_EXEC_CONFIGURATION =
+      new Precomputed<>("baseline_exec_configuration", /* shareable= */ false);
 
   private final Object value;
 

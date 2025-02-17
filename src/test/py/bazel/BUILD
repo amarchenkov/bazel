@@ -46,10 +46,16 @@ py_library(
 gen_workspace_stanza(
     name = "default_repos_stanza",
     out = "default_repos_stanza.txt",
+    postamble = "load('@rules_python//python:repositories.bzl', 'py_repositories')\n" +
+                "py_repositories()",
+    preamble = "load('@bazel_tools//tools/build_defs/repo:http.bzl', 'http_archive')",
     repos = [
+        "bazel_skylib",
         "rules_license",
         "rules_cc",
         "rules_python",
+        "rules_shell",
+        "com_google_protobuf",
     ],
 )
 
@@ -146,6 +152,8 @@ py_test(
         "//src/conditions:windows": "windows_remote_test.py",
         "//conditions:default": "empty_test.py",
     }),
+    # TODO - ilist@: fix the setup of rules_shell for this test
+    tags = ["manual"],
     deps = select({
         "//src/conditions:windows": [":test_base"],
         "//conditions:default": [],
@@ -261,12 +269,6 @@ py_test(
     deps = [":test_base"],
 )
 
-py_test(
-    name = "bazel_workspace_test",
-    srcs = ["bazel_workspace_test.py"],
-    deps = [":test_base"],
-)
-
 py_library(
     name = "bzlmod_test_utils",
     srcs = ["bzlmod/test_utils.py"],
@@ -288,7 +290,7 @@ py_test(
 
 py_test(
     name = "bazel_lockfile_test",
-    size = "medium",
+    size = "large",
     srcs = ["bzlmod/bazel_lockfile_test.py"],
     shard_count = 5,
     tags = [
@@ -304,7 +306,7 @@ py_test(
     name = "bazel_fetch_test",
     size = "medium",
     srcs = ["bzlmod/bazel_fetch_test.py"],
-    data = ["//tools/build_defs/repo:http_src"],
+    data = ["//tools/build_defs/repo:mock_srcs"],
     shard_count = 5,
     tags = [
         "requires-network",
@@ -319,7 +321,7 @@ py_test(
     name = "bazel_vendor_test",
     size = "large",
     srcs = ["bzlmod/bazel_vendor_test.py"],
-    data = ["//tools/build_defs/repo:http_src"],
+    data = ["//tools/build_defs/repo:mock_srcs"],
     shard_count = 5,
     tags = [
         "requires-network",

@@ -924,10 +924,10 @@ def _expand_make_variables_for_copts(ctx, tokenization, unexpanded_tokens, addit
                 tokens.append(_expand(ctx, token, additional_make_variable_substitutions, targets = targets))
     return tokens
 
-def _get_copts(ctx, feature_configuration, additional_make_variable_substitutions):
-    if not hasattr(ctx.attr, "copts"):
-        fail("could not find rule attribute named: 'copts'")
-    attribute_copts = ctx.attr.copts
+def _get_copts(ctx, feature_configuration, additional_make_variable_substitutions, attr = "copts"):
+    if not hasattr(ctx.attr, attr):
+        fail("could not find rule attribute named: '{}'".format(attr))
+    attribute_copts = getattr(ctx.attr, attr)
     tokenization = not (cc_common.is_enabled(feature_configuration = feature_configuration, feature_name = "no_copts_tokenization") or "no_copts_tokenization" in ctx.features)
     expanded_attribute_copts = _expand_make_variables_for_copts(ctx, tokenization, attribute_copts, additional_make_variable_substitutions)
     return expanded_attribute_copts
@@ -956,11 +956,12 @@ def _is_stamping_enabled_for_aspect(ctx):
         stamp = ctx.rule.attr.stamp
     return stamp
 
-_RUNFILES_LIBRARY_TARGET = Label("@bazel_tools//tools/cpp/runfiles")
+_RUNFILES_LIBRARY_TARGET = Label("@rules_cc//cc/runfiles")
+_LEGACY_RUNFILES_LIBRARY_TARGET = Label("@bazel_tools//tools/cpp/runfiles")
 
 def _get_local_defines_for_runfiles_lookup(ctx, all_deps):
     for dep in all_deps:
-        if dep.label == _RUNFILES_LIBRARY_TARGET:
+        if dep.label == _RUNFILES_LIBRARY_TARGET or dep.label == _LEGACY_RUNFILES_LIBRARY_TARGET:
             return ["BAZEL_CURRENT_REPOSITORY=\"{}\"".format(ctx.label.workspace_name)]
     return []
 
@@ -1100,7 +1101,7 @@ def _get_coverage_environment(ctx, cc_config, cc_toolchain):
     }
     for k in list(env.keys()):
         if env[k] == None:
-            env[k] = ""
+            env.pop(k)
     if cc_config.fdo_instrument():
         env["FDO_DIR"] = cc_config.fdo_instrument()
     return env
@@ -1142,11 +1143,11 @@ def _linkopts(ctx, additional_make_variable_substitutions, cc_toolchain):
         fail("in linkopts attribute of cc_library rule {}: Apple builds do not support statically linked binaries".format(ctx.label))
     return tokens
 
-def _defines_attribute(ctx, additional_make_variable_substitutions, attr_name):
+def _defines_attribute(ctx, additional_make_variable_substitutions, attr_name, additional_targets):
     defines = getattr(ctx.attr, attr_name, [])
     if len(defines) == 0:
         return []
-    targets = []
+    targets = list(additional_targets)
     for dep in ctx.attr.deps:
         targets.append(dep)
     result = []
@@ -1164,10 +1165,10 @@ def _defines_attribute(ctx, additional_make_variable_substitutions, attr_name):
     return result
 
 def _defines(ctx, additional_make_variable_substitutions):
-    return _defines_attribute(ctx, additional_make_variable_substitutions, "defines")
+    return _defines_attribute(ctx, additional_make_variable_substitutions, "defines", [])
 
 def _local_defines(ctx, additional_make_variable_substitutions):
-    return _defines_attribute(ctx, additional_make_variable_substitutions, "local_defines")
+    return _defines_attribute(ctx, additional_make_variable_substitutions, "local_defines", getattr(ctx.attr, "additional_compiler_inputs", []))
 
 def _linker_scripts(ctx):
     result = []

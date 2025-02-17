@@ -65,8 +65,6 @@ msys*|mingw*|cygwin*)
 esac
 
 if "$is_windows"; then
-  export MSYS_NO_PATHCONV=1
-  export MSYS2_ARG_CONV_EXCL="*"
   declare -r EXE_EXT=".exe"
 else
   declare -r EXE_EXT=""
@@ -99,10 +97,8 @@ function test_credential_helper_remote_cache() {
 
   bazel build \
       --remote_cache=grpc://localhost:${worker_port} \
-      //a:a >& $TEST_log || fail "Build without credentials should have succeeded"
+      //a:a >& $TEST_log && fail "Build without credentials should have failed"
   expect_log "Failed to query remote execution capabilities"
-
-  bazel clean
 
   # Helper shouldn't have been called yet.
   expect_credential_helper_calls 0
@@ -176,6 +172,44 @@ function test_credential_helper_clear_cache() {
 
   # Build after clean should have called helper again.
   expect_credential_helper_calls 10
+}
+
+function test_remote_grpc_cache_with_legacy_api() {
+  stop_worker
+  start_worker --legacy_api
+
+  mkdir -p a
+  cat > a/BUILD <<EOF
+genrule(
+  name = 'foo',
+  outs = ["foo.txt"],
+  cmd = "touch \$@",
+)
+EOF
+
+  bazel build \
+      --remote_cache=grpc://localhost:${worker_port} \
+      //a:foo \
+      || fail "Failed to build //a:foo with legacy api Remote Cache"
+}
+
+function test_remote_executor_with_legacy_api() {
+  stop_worker
+  start_worker --legacy_api
+
+  mkdir -p a
+  cat > a/BUILD <<EOF
+genrule(
+  name = 'foo',
+  outs = ["foo.txt"],
+  cmd = "touch \$@",
+)
+EOF
+
+  bazel build \
+      --remote_executor=grpc://localhost:${worker_port} \
+      //a:foo \
+      || fail "Failed to build //a:foo with legacy api Remote Executor"
 }
 
 function test_remote_grpc_cache_with_protocol() {
@@ -273,13 +307,6 @@ EOF
 }
 
 function test_cc_binary() {
-  if [[ "$PLATFORM" == "darwin" ]]; then
-    # TODO(b/37355380): This test is disabled due to RemoteWorker not supporting
-    # setting SDKROOT and DEVELOPER_DIR appropriately, as is required of
-    # action executors in order to select the appropriate Xcode toolchain.
-    return 0
-  fi
-
   mkdir -p a
   cat > a/BUILD <<EOF
 package(default_visibility = ["//visibility:public"])
@@ -301,19 +328,12 @@ EOF
       --remote_executor=grpc://localhost:${worker_port} \
       //a:test >& $TEST_log \
       || fail "Failed to build //a:test with remote execution"
-  expect_log "6 processes: 4 internal, 2 remote"
+  expect_log "[0-9] processes: [0-9] internal, 2 remote\\."
   diff bazel-bin/a/test ${TEST_TMPDIR}/test_expected \
       || fail "Remote execution generated different result"
 }
 
 function test_cc_test() {
-  if [[ "$PLATFORM" == "darwin" ]]; then
-    # TODO(b/37355380): This test is disabled due to RemoteWorker not supporting
-    # setting SDKROOT and DEVELOPER_DIR appropriately, as is required of
-    # action executors in order to select the appropriate Xcode toolchain.
-    return 0
-  fi
-
   mkdir -p a
   cat > a/BUILD <<EOF
 package(default_visibility = ["//visibility:public"])
@@ -336,13 +356,6 @@ EOF
 }
 
 function test_cc_test_split_xml() {
-  if [[ "$PLATFORM" == "darwin" ]]; then
-    # TODO(b/37355380): This test is disabled due to RemoteWorker not supporting
-    # setting SDKROOT and DEVELOPER_DIR appropriately, as is required of
-    # action executors in order to select the appropriate Xcode toolchain.
-    return 0
-  fi
-
   mkdir -p a
   cat > a/BUILD <<EOF
 package(default_visibility = ["//visibility:public"])
@@ -2396,13 +2409,6 @@ EOF
 # Older versions of gcov are not supported with bazel coverage and so will be skipped.
 # See the above `test_java_rbe_coverage_produces_report` for more information.
 function test_cc_rbe_coverage_produces_report() {
-  if [[ "$PLATFORM" == "darwin" ]]; then
-    # TODO(b/37355380): This test is disabled due to RemoteWorker not supporting
-    # setting SDKROOT and DEVELOPER_DIR appropriately, as is required of
-    # action executors in order to select the appropriate Xcode toolchain.
-    return 0
-  fi
-
   # Check to see if intermediate files are supported, otherwise skip.
   gcov --help | grep "\-i," || return 0
 
@@ -2520,13 +2526,6 @@ EOF
 # returned non-empty.
 # See the above `test_java_rbe_coverage_produces_report` for more information.
 function test_cc_rbe_coverage_produces_report_with_llvm() {
-  if [[ "$PLATFORM" == "darwin" ]]; then
-    # TODO(b/37355380): This test is disabled due to RemoteWorker not supporting
-    # setting SDKROOT and DEVELOPER_DIR appropriately, as is required of
-    # action executors in order to select the appropriate Xcode toolchain.
-    return 0
-  fi
-
   local -r clang=$(which clang)
   if [[ ! -x "${clang}" ]]; then
     echo "clang not installed. Skipping"
@@ -2782,7 +2781,7 @@ EOF
     --disk_cache=$CACHEDIR \
     //a:test >& $TEST_log || fail "Failed to build //a:test"
 
-  expect_log "6 processes: 4 internal, 2 .*-sandbox"
+  expect_log "7 processes: 5 internal, 2 .*-sandbox"
 
   bazel clean
 
@@ -2790,7 +2789,7 @@ EOF
     --disk_cache=$CACHEDIR \
     //a:test >& $TEST_log || fail "Failed to build //a:test"
 
-  expect_log "6 processes: 2 disk cache hit, 4 internal"
+  expect_log "7 processes: 2 disk cache hit, 5 internal"
 }
 
 # Bazel assumes that non-ASCII characters in file contents (and, in
@@ -3062,13 +3061,6 @@ EOF
 }
 
 function test_external_cc_test() {
-  if [[ "$PLATFORM" == "darwin" ]]; then
-    # TODO(b/37355380): This test is disabled due to RemoteWorker not supporting
-    # setting SDKROOT and DEVELOPER_DIR appropriately, as is required of
-    # action executors in order to select the appropriate Xcode toolchain.
-    return 0
-  fi
-
   setup_external_cc_test
 
   bazel test \
@@ -3078,13 +3070,6 @@ function test_external_cc_test() {
 }
 
 function test_external_cc_test_sibling_repository_layout() {
-  if [[ "$PLATFORM" == "darwin" ]]; then
-    # TODO(b/37355380): This test is disabled due to RemoteWorker not supporting
-    # setting SDKROOT and DEVELOPER_DIR appropriately, as is required of
-    # action executors in order to select the appropriate Xcode toolchain.
-    return 0
-  fi
-
   setup_external_cc_test
 
   bazel test \
@@ -3193,6 +3178,7 @@ function setup_cc_binary_tool_with_dynamic_deps() {
   local repo=$1
 
   cat >> MODULE.bazel <<'EOF'
+bazel_dep(name = "apple_support", version = "1.17.0")
 local_repository = use_repo_rule("@bazel_tools//tools/build_defs/repo:local.bzl", "local_repository")
 local_repository(
   name = "other_repo",
@@ -3255,62 +3241,38 @@ EOF
 }
 
 function test_cc_binary_tool_with_dynamic_deps() {
-  if [[ "$PLATFORM" == "darwin" ]]; then
-    # TODO(b/37355380): This test is disabled due to RemoteWorker not supporting
-    # setting SDKROOT and DEVELOPER_DIR appropriately, as is required of
-    # action executors in order to select the appropriate Xcode toolchain.
-    return 0
-  fi
-
   setup_cc_binary_tool_with_dynamic_deps .
 
   bazel build \
+      --incompatible_macos_set_install_name \
       --remote_executor=grpc://localhost:${worker_port} \
       //pkg:rule >& $TEST_log || fail "Build should succeed"
 }
 
 function test_cc_binary_tool_with_dynamic_deps_sibling_repository_layout() {
-  if [[ "$PLATFORM" == "darwin" ]]; then
-    # TODO(b/37355380): This test is disabled due to RemoteWorker not supporting
-    # setting SDKROOT and DEVELOPER_DIR appropriately, as is required of
-    # action executors in order to select the appropriate Xcode toolchain.
-    return 0
-  fi
-
   setup_cc_binary_tool_with_dynamic_deps .
 
   bazel build \
+      --incompatible_macos_set_install_name \
       --experimental_sibling_repository_layout \
       --remote_executor=grpc://localhost:${worker_port} \
       //pkg:rule >& $TEST_log || fail "Build should succeed"
 }
 
 function test_external_cc_binary_tool_with_dynamic_deps() {
-  if [[ "$PLATFORM" == "darwin" ]]; then
-    # TODO(b/37355380): This test is disabled due to RemoteWorker not supporting
-    # setting SDKROOT and DEVELOPER_DIR appropriately, as is required of
-    # action executors in order to select the appropriate Xcode toolchain.
-    return 0
-  fi
-
   setup_cc_binary_tool_with_dynamic_deps other_repo
 
   bazel build \
+      --incompatible_macos_set_install_name \
       --remote_executor=grpc://localhost:${worker_port} \
       @other_repo//pkg:rule >& $TEST_log || fail "Build should succeed"
 }
 
 function test_external_cc_binary_tool_with_dynamic_deps_sibling_repository_layout() {
-  if [[ "$PLATFORM" == "darwin" ]]; then
-    # TODO(b/37355380): This test is disabled due to RemoteWorker not supporting
-    # setting SDKROOT and DEVELOPER_DIR appropriately, as is required of
-    # action executors in order to select the appropriate Xcode toolchain.
-    return 0
-  fi
-
   setup_cc_binary_tool_with_dynamic_deps other_repo
 
   bazel build \
+      --incompatible_macos_set_install_name \
       --experimental_sibling_repository_layout \
       --remote_executor=grpc://localhost:${worker_port} \
       @other_repo//pkg:rule >& $TEST_log || fail "Build should succeed"
@@ -3340,6 +3302,29 @@ EOF
       --incompatible_check_sharding_support \
       --remote_download_minimal \
       //:x  &> $TEST_log || fail "expected success"
+}
+
+function test_premature_exit_file_checked_remote_download_minimal() {
+  cat <<'EOF' > BUILD
+sh_test(
+    name = 'x',
+    srcs = ['x.sh'],
+)
+EOF
+  cat <<'EOF' > x.sh
+#!/bin/sh
+touch "$TEST_PREMATURE_EXIT_FILE"
+echo "fake pass"
+exit 0
+EOF
+  chmod +x x.sh
+
+  bazel test \
+      --remote_executor=grpc://localhost:${worker_port} \
+      --remote_download_minimal \
+      --test_output=errors \
+      //:x  &> $TEST_log && fail "expected failure"
+  expect_log "-- Test exited prematurely (TEST_PREMATURE_EXIT_FILE exists) --"
 }
 
 function test_cache_key_scrubbing() {
@@ -3464,7 +3449,29 @@ function test_platform_no_remote_exec_test_action() {
 exit 0
 EOF
   chmod 755 a/test.sh
+  cat > a/rule.bzl <<'EOF'
+def _my_test(ctx):
+  script = ctx.actions.declare_file(ctx.label.name)
+  ctx.actions.run_shell(
+    outputs = [script],
+    command = """
+cat > $1 <<'EOF2'
+#!/usr/bin/env sh
+exit 0
+EOF2
+chmod +x $1
+""",
+    arguments = [script.path],
+  )
+  return [DefaultInfo(executable = script)]
+my_test = rule(
+  implementation = _my_test,
+  test = True,
+)
+EOF
   cat > a/BUILD <<'EOF'
+load(":rule.bzl", "my_test")
+
 constraint_setting(name = "foo")
 
 constraint_value(
@@ -3477,7 +3484,7 @@ platform(
     name = "host",
     constraint_values = [":has_foo"],
     exec_properties = {
-        "no-remote-exec": "1",
+        "test.no-remote-exec": "1",
     },
     parents = ["@bazel_tools//tools:host_platform"],
     visibility = ["//visibility:public"],
@@ -3495,44 +3502,43 @@ platform(
     },
 )
 
-sh_test(
+my_test(
     name = "test",
-    srcs = ["test.sh"],
-    exec_compatible_with = [":has_foo"],
+    exec_group_compatible_with = {
+        "test": [":has_foo"],
+    },
 )
 
-sh_test(
+my_test(
     name = "test2",
-    srcs = ["test.sh"],
-    exec_compatible_with = [":has_foo"],
-    target_compatible_with = [":has_foo"],
+    exec_properties = {
+        "test.no-remote-exec": "1",
+    },
 )
 EOF
 
-  # A test target includes 2 actions: 1 build action (a) and 1 test action (b)
-  # This test currently demonstrates that:
-  #  - (b) would always be executed on Bazel's target platform, set by "--platforms=" flag.
-  #  - Regardless of 'no-remote-exec' set on (b)'s platform, (b) would still be executed remotely.
-  #    The remote test action will be sent with `"no-remote-exec": "1"` in it's platform.
-  #
-  # TODO: Make this test's result consistent with 'test_platform_no_remote_exec'.
-  # Test action (b) should be executed locally instead of remotely in this setup.
-
+  # A my_test target includes 2 actions: 1 build action (a) and 1 test action (b),
+  # with (b) running two spawns (test execution, test XML generation).
+  # The genrule spawn runs remotely, both test spawns run locally.
   bazel test \
     --extra_execution_platforms=//a:remote,//a:host \
     --platforms=//a:remote \
     --spawn_strategy=remote,local \
     --remote_executor=grpc://localhost:${worker_port} \
     //a:test >& $TEST_log || fail "Failed to test //a:test"
-  expect_log "1 local, 1 remote"
+  expect_log "2 local, 1 remote"
 
+  # Note: While the test spawns are executed locally, they still select the
+  # remote platform as it is the first registered execution platform and there
+  # are no constraints to force a different one. This is not desired behavior,
+  # but it isn't covered by this test.
   bazel test \
     --extra_execution_platforms=//a:remote,//a:host \
     --platforms=//a:host \
     --spawn_strategy=remote,local \
     --remote_executor=grpc://localhost:${worker_port} \
     //a:test2 >& $TEST_log || fail "Failed to test //a:test2"
-  expect_log "1 local, 1 remote"
+  expect_log "2 local, 1 remote"
 
   bazel clean
 
@@ -3542,7 +3548,7 @@ EOF
     --spawn_strategy=remote,local \
     --remote_executor=grpc://localhost:${worker_port} \
     //a:test >& $TEST_log || fail "Failed to test //a:test"
-  expect_log "2 remote cache hit"
+  expect_log "3 remote cache hit"
 
   bazel test \
     --extra_execution_platforms=//a:remote,//a:host \
@@ -3550,7 +3556,7 @@ EOF
     --spawn_strategy=remote,local \
     --remote_executor=grpc://localhost:${worker_port} \
     //a:test2 >& $TEST_log || fail "Failed to test //a:test2"
-  expect_log "2 remote cache hit"
+  expect_log "3 remote cache hit"
 }
 
 function setup_inlined_outputs() {

@@ -57,13 +57,14 @@ import com.google.devtools.build.lib.exec.ExecutorBuilder;
 import com.google.devtools.build.lib.exec.ModuleActionContextRegistry;
 import com.google.devtools.build.lib.exec.SpawnStrategyRegistry;
 import com.google.devtools.build.lib.profiler.Profiler;
+import com.google.devtools.build.lib.remote.CombinedCacheClientFactory.CombinedCacheClient;
 import com.google.devtools.build.lib.remote.LeaseService.LeaseExtension;
-import com.google.devtools.build.lib.remote.RemoteCacheClientFactory.CombinedCacheClient;
 import com.google.devtools.build.lib.remote.RemoteServerCapabilities.ServerCapabilitiesRequirement;
 import com.google.devtools.build.lib.remote.circuitbreaker.CircuitBreakerFactory;
 import com.google.devtools.build.lib.remote.common.RemoteCacheClient;
 import com.google.devtools.build.lib.remote.common.RemoteExecutionClient;
 import com.google.devtools.build.lib.remote.disk.DiskCacheClient;
+import com.google.devtools.build.lib.remote.disk.DiskCacheGarbageCollectorIdleTask;
 import com.google.devtools.build.lib.remote.downloader.GrpcRemoteDownloader;
 import com.google.devtools.build.lib.remote.http.DownloadTimeoutException;
 import com.google.devtools.build.lib.remote.http.HttpException;
@@ -179,14 +180,19 @@ public final class RemoteModule extends BlazeModule {
     builder.setRepositoryRemoteExecutorFactory(repositoryRemoteExecutorFactoryDelegate);
   }
 
-  /** Returns whether remote execution should be available. */
+  /** Returns whether remote execution should be enabled. */
   public static boolean shouldEnableRemoteExecution(RemoteOptions options) {
     return !Strings.isNullOrEmpty(options.remoteExecutor);
   }
 
-  /** Returns whether remote downloading should be available. */
+  /** Returns whether the remote downloader should be enabled. */
   private static boolean shouldEnableRemoteDownloader(RemoteOptions options) {
     return !Strings.isNullOrEmpty(options.remoteDownloader);
+  }
+
+  /** Returns whether the remote output service should be enabled. */
+  private static boolean shouldEnableRemoteOutputService(RemoteOptions options) {
+    return !Strings.isNullOrEmpty(options.remoteOutputService);
   }
 
   public static final Predicate<? super Exception> RETRIABLE_HTTP_ERRORS =
@@ -233,7 +239,7 @@ public final class RemoteModule extends BlazeModule {
         CircuitBreakerFactory.createCircuitBreaker(remoteOptions);
     try {
       combinedCacheClient =
-          RemoteCacheClientFactory.create(
+          CombinedCacheClientFactory.create(
               remoteOptions,
               credentials,
               authAndTlsOptions,
@@ -246,8 +252,8 @@ public final class RemoteModule extends BlazeModule {
       handleInitFailure(env, e, Code.CACHE_INIT_FAILURE);
       return;
     }
-    RemoteCache remoteCache =
-        new RemoteCache(
+    CombinedCache combinedCache =
+        new CombinedCache(
             combinedCacheClient.remoteCacheClient(),
             combinedCacheClient.diskCacheClient(),
             remoteOptions,
@@ -256,7 +262,7 @@ public final class RemoteModule extends BlazeModule {
         RemoteActionContextProvider.createForRemoteCaching(
             executorService,
             env,
-            remoteCache,
+            combinedCache,
             /* retryScheduler= */ null,
             digestUtil,
             remoteOutputChecker,
@@ -307,26 +313,15 @@ public final class RemoteModule extends BlazeModule {
       verboseFailures = executionOptions.verboseFailures;
     }
 
-    boolean enableDiskCache = RemoteCacheClientFactory.isDiskCache(remoteOptions);
-    boolean enableHttpCache = RemoteCacheClientFactory.isHttpCache(remoteOptions);
-    boolean enableRemoteExecution = shouldEnableRemoteExecution(remoteOptions);
-    // If --remote_cache is empty but --remote_executor is not, endpoint for cache should be the one
-    // for execution.
-    if (enableRemoteExecution && Strings.isNullOrEmpty(remoteOptions.remoteCache)) {
+    // If --remote_cache is empty but --remote_executor is not, reuse the latter for the former.
+    if (!Strings.isNullOrEmpty(remoteOptions.remoteExecutor)
+        && Strings.isNullOrEmpty(remoteOptions.remoteCache)) {
       remoteOptions.remoteCache = remoteOptions.remoteExecutor;
     }
-    boolean enableGrpcCache = GrpcCacheClient.isRemoteCacheOptions(remoteOptions);
-    boolean enableRemoteDownloader = shouldEnableRemoteDownloader(remoteOptions);
-    boolean enableRemoteOutputService = !Strings.isNullOrEmpty(remoteOptions.remoteOutputService);
 
-    if (enableRemoteDownloader && !enableGrpcCache) {
-      throw createOptionsExitException(
-          "The remote downloader can only be used in combination with gRPC caching",
-          FailureDetails.RemoteOptions.Code.DOWNLOADER_WITHOUT_GRPC_CACHE);
-    }
-
-    if (enableRemoteOutputService) {
-      if (enableDiskCache) {
+    if (shouldEnableRemoteOutputService(remoteOptions)) {
+      if (CombinedCacheClientFactory.isDiskCache(remoteOptions)) {
+        remoteOptions.diskCache = null;
         env.getReporter()
             .handle(
                 Event.warn(
@@ -335,10 +330,30 @@ public final class RemoteModule extends BlazeModule {
 
       if (Strings.isNullOrEmpty(remoteOptions.remoteCache)) {
         throw createOptionsExitException(
-            "--experimental_remote_output_service can only be used in combination with"
+            "--experimental_remote_output_service must be used in combination with one of"
                 + " --remote_cache or --remote_executor.",
             FailureDetails.RemoteOptions.Code.EXECUTION_WITH_INVALID_CACHE);
       }
+    }
+
+    boolean enableDiskCache = CombinedCacheClientFactory.isDiskCache(remoteOptions);
+    boolean enableHttpCache = CombinedCacheClientFactory.isHttpCache(remoteOptions);
+    boolean enableRemoteExecution = shouldEnableRemoteExecution(remoteOptions);
+    boolean enableGrpcCache = GrpcCacheClient.isRemoteCacheOptions(remoteOptions);
+    boolean enableRemoteDownloader = shouldEnableRemoteDownloader(remoteOptions);
+
+    if (enableDiskCache) {
+      var gcIdleTask =
+          DiskCacheGarbageCollectorIdleTask.create(remoteOptions, env.getWorkingDirectory());
+      if (gcIdleTask != null) {
+        env.addIdleTask(gcIdleTask);
+      }
+    }
+
+    if (enableRemoteDownloader && !enableGrpcCache) {
+      throw createOptionsExitException(
+          "The remote downloader can only be used in combination with gRPC caching",
+          FailureDetails.RemoteOptions.Code.DOWNLOADER_WITHOUT_GRPC_CACHE);
     }
 
     if (!enableDiskCache && !enableHttpCache && !enableGrpcCache && !enableRemoteExecution) {
@@ -527,7 +542,7 @@ public final class RemoteModule extends BlazeModule {
             invocationId,
             remoteOptions.remoteInstanceName,
             callCredentials,
-            remoteOptions.remoteTimeout.getSeconds(),
+            remoteOptions.remoteTimeout.toSeconds(),
             retrier);
 
     ReferenceCountedChannel execChannel = null;
@@ -614,7 +629,7 @@ public final class RemoteModule extends BlazeModule {
       if (enableDiskCache) {
         try {
           diskCacheClient =
-              RemoteCacheClientFactory.createDiskCache(
+              CombinedCacheClientFactory.createDiskCache(
                   env.getWorkingDirectory(),
                   remoteOptions,
                   digestUtil,
@@ -676,7 +691,7 @@ public final class RemoteModule extends BlazeModule {
       if (enableDiskCache) {
         try {
           diskCacheClient =
-              RemoteCacheClientFactory.createDiskCache(
+              CombinedCacheClientFactory.createDiskCache(
                   env.getWorkingDirectory(),
                   remoteOptions,
                   digestUtil,
@@ -688,13 +703,13 @@ public final class RemoteModule extends BlazeModule {
         }
       }
 
-      RemoteCache remoteCache =
-          new RemoteCache(remoteCacheClient, diskCacheClient, remoteOptions, digestUtil);
+      CombinedCache combinedCache =
+          new CombinedCache(remoteCacheClient, diskCacheClient, remoteOptions, digestUtil);
       actionContextProvider =
           RemoteActionContextProvider.createForRemoteCaching(
               executorService,
               env,
-              remoteCache,
+              combinedCache,
               retryScheduler,
               digestUtil,
               remoteOutputChecker,
@@ -707,7 +722,7 @@ public final class RemoteModule extends BlazeModule {
             executorService,
             env.getReporter(),
             verboseFailures,
-            actionContextProvider.getRemoteCache(),
+            actionContextProvider.getCombinedCache(),
             remoteOptions.remoteInstanceName,
             remoteOptions.remoteBytestreamUriPrefix,
             buildRequestId,
@@ -913,9 +928,9 @@ public final class RemoteModule extends BlazeModule {
   }
 
   private static void afterCommandTask(
-      RemoteActionContextProvider actionContextProvider,
-      TempPathGenerator tempPathGenerator,
-      AsynchronousMessageOutputStream<LogEntry> rpcLogFile)
+      @Nullable RemoteActionContextProvider actionContextProvider,
+      @Nullable TempPathGenerator tempPathGenerator,
+      @Nullable AsynchronousMessageOutputStream<LogEntry> rpcLogFile)
       throws AbruptExitException {
     if (actionContextProvider != null) {
       actionContextProvider.afterCommand();
@@ -1013,7 +1028,7 @@ public final class RemoteModule extends BlazeModule {
             ? OutputPermissions.WRITABLE
             : OutputPermissions.READONLY;
 
-    if (actionContextProvider.getRemoteCache() != null) {
+    if (actionContextProvider.getCombinedCache() != null) {
       Preconditions.checkNotNull(remoteOutputChecker, "remoteOutputChecker must not be null");
       Preconditions.checkNotNull(outputService, "remoteOutputService must not be null");
 
@@ -1022,7 +1037,7 @@ public final class RemoteModule extends BlazeModule {
               env.getReporter(),
               env.getBuildRequestId(),
               env.getCommandId().toString(),
-              actionContextProvider.getRemoteCache(),
+              actionContextProvider.getCombinedCache(),
               env.getExecRoot(),
               tempPathGenerator,
               remoteOutputChecker,
@@ -1040,7 +1055,7 @@ public final class RemoteModule extends BlazeModule {
                 env.getBlazeWorkspace().getPersistentActionCache(),
                 env.getBuildRequestId(),
                 env.getCommandId().toString(),
-                actionContextProvider.getRemoteCache(),
+                actionContextProvider.getCombinedCache(),
                 remoteOptions.remoteCacheTtl);
       }
       var leaseService =
@@ -1177,7 +1192,7 @@ public final class RemoteModule extends BlazeModule {
           && !credentials.getRequestMetadata(new URI(remoteOptions.remoteCache)).isEmpty()) {
         // TODO(yannic): Make this a error aborting the build.
         credentialHelperEnvironment
-            .getEventReporter()
+            .eventReporter()
             .handle(
                 Event.warn(
                     "Credentials are transmitted in plaintext to "

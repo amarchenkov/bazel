@@ -21,6 +21,7 @@ import com.google.common.hash.HashCode;
 import com.google.devtools.build.lib.actions.AbstractAction;
 import com.google.devtools.build.lib.actions.ActionContext;
 import com.google.devtools.build.lib.actions.ActionInput;
+import com.google.devtools.build.lib.actions.Artifact.SourceArtifact;
 import com.google.devtools.build.lib.actions.ExecException;
 import com.google.devtools.build.lib.actions.FileArtifactValue;
 import com.google.devtools.build.lib.actions.InputMetadataProvider;
@@ -34,6 +35,7 @@ import com.google.devtools.build.lib.exec.Protos.Digest;
 import com.google.devtools.build.lib.exec.Protos.EnvironmentVariable;
 import com.google.devtools.build.lib.exec.Protos.Platform;
 import com.google.devtools.build.lib.remote.options.RemoteOptions;
+import com.google.devtools.build.lib.remote.util.DigestUtil;
 import com.google.devtools.build.lib.vfs.DigestHashFunction;
 import com.google.devtools.build.lib.vfs.DigestUtils;
 import com.google.devtools.build.lib.vfs.FileStatus;
@@ -124,8 +126,7 @@ public abstract class SpawnLogContext implements ActionContext {
    *
    * <p>Do not call for action outputs.
    */
-  protected boolean isInputDirectory(
-      ActionInput input, Path path, InputMetadataProvider inputMetadataProvider)
+  protected boolean isInputDirectory(ActionInput input, InputMetadataProvider inputMetadataProvider)
       throws IOException {
     if (input.isDirectory()) {
       return true;
@@ -137,17 +138,12 @@ public abstract class SpawnLogContext implements ActionContext {
     if (input instanceof VirtualActionInput) {
       return false;
     }
-    // There are two cases in which an input's declared type may disagree with the filesystem:
-    //   (1) a source artifact pointing to a directory;
-    //   (2) an output artifact declared as a file but materialized as a directory, when allowed by
-    //       --noincompatible_disallow_unsound_directory_outputs.
-    // Try to avoid unnecessary I/O by inspecting its metadata, which in most cases should have
-    // already been collected and cached.
-    FileArtifactValue metadata = inputMetadataProvider.getInputMetadata(input);
-    if (metadata != null) {
-      return metadata.getType().isDirectory();
+    // Source artifacts are always of file type, but may be directories in the filesystem.
+    if (input instanceof SourceArtifact) {
+      FileArtifactValue metadata = inputMetadataProvider.getInputMetadata(input);
+      return metadata != null && metadata.getType().isDirectory();
     }
-    return path.isDirectory();
+    return false;
   }
 
   /**
@@ -159,7 +155,7 @@ public abstract class SpawnLogContext implements ActionContext {
   protected Digest computeDigest(
       @Nullable ActionInput input,
       Path path,
-      InputMetadataProvider inputMetadataProvider,
+      @Nullable InputMetadataProvider inputMetadataProvider,
       XattrProvider xattrProvider,
       DigestHashFunction digestHashFunction,
       boolean includeHashFunctionName)
@@ -172,24 +168,24 @@ public abstract class SpawnLogContext implements ActionContext {
 
     if (input != null) {
       if (input instanceof VirtualActionInput virtualActionInput) {
-        byte[] blob = virtualActionInput.getBytes().toByteArray();
-        return builder
-            .setHash(digestHashFunction.getHashFunction().hashBytes(blob).toString())
-            .setSizeBytes(blob.length)
-            .build();
+        build.bazel.remote.execution.v2.Digest digest =
+            DigestUtil.compute(virtualActionInput, digestHashFunction.getHashFunction());
+        return builder.setHash(digest.getHash()).setSizeBytes(digest.getSizeBytes()).build();
       }
 
-      // Try to obtain a digest from the input metadata.
-      try {
-        FileArtifactValue metadata = inputMetadataProvider.getInputMetadata(input);
-        if (metadata != null && metadata.getDigest() != null) {
-          return builder
-              .setHash(HashCode.fromBytes(metadata.getDigest()).toString())
-              .setSizeBytes(metadata.getSize())
-              .build();
+      if (inputMetadataProvider != null) {
+        // Try to obtain a digest from the input metadata.
+        try {
+          FileArtifactValue metadata = inputMetadataProvider.getInputMetadata(input);
+          if (metadata != null && metadata.getDigest() != null) {
+            return builder
+                .setHash(HashCode.fromBytes(metadata.getDigest()).toString())
+                .setSizeBytes(metadata.getSize())
+                .build();
+          }
+        } catch (IOException | IllegalStateException e) {
+          // Pass through to local computation.
         }
-      } catch (IOException | IllegalStateException e) {
-        // Pass through to local computation.
       }
     }
 

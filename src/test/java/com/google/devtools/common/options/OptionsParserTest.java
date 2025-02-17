@@ -1458,8 +1458,20 @@ public final class OptionsParserTest {
         OptionsParser.builder().optionsClasses(ExpansionWarningOptions.class).build();
     parser.parse("--first", "--second");
     assertThat(parser.getWarnings())
-        .containsExactly(
-            "option '--underlying' was expanded to from both option '--first' and option "
+        .contains(
+            "option '--underlying' was expanded from both option '--first' and option "
+                + "'--second'");
+  }
+
+  @Test
+  public void noWarningForTwoConflictingExpansionOptionsFromRcFile() throws Exception {
+    OptionsParser parser =
+        OptionsParser.builder().optionsClasses(ExpansionWarningOptions.class).build();
+    parser.parse(
+        OptionPriority.PriorityCategory.RC_FILE, null, ImmutableList.of("--first", "--second"));
+    assertThat(parser.getWarnings())
+        .doesNotContain(
+            "option '--underlying' was expanded from both option '--first' and option "
                 + "'--second'");
   }
 
@@ -2623,6 +2635,47 @@ public final class OptionsParserTest {
 
     assertThat(parser.getOptions(ExpandingOptions.class)).isNotNull();
     assertThat(parser.getOptions(ExpandingOptionsFallback.class)).isNull();
+  }
+
+  @Test
+  public void testOptionsParser_getUserOptions_excludesClientOptions() throws Exception {
+    OptionsParser parser =
+        OptionsParser.builder()
+            .optionsClasses(ExpandingOptions.class, ExpandingOptionsFallback.class)
+            .build();
+    parser.parseWithSourceFunction(
+        PriorityCategory.RC_FILE, o -> "client", ImmutableList.of("--foo"), null);
+    assertThat(parser.getUserOptions()).isEmpty();
+
+    parser.parseWithSourceFunction(
+        PriorityCategory.RC_FILE, o -> ".bazelrc", ImmutableList.of("--foo"), null);
+
+    assertThat(parser.getUserOptions().keySet()).containsExactly("--foo", "--nobar");
+  }
+
+  @Test
+  public void testOptionsParser_explicitOptions_excludesFlagsetOptions() throws Exception {
+    OptionsParser parser = OptionsParser.builder().optionsClasses(ExampleFoo.class).build();
+    parser.parse(
+        PriorityCategory.RC_FILE, "//test:PROJECT.scl", ImmutableList.of("--foo=set_by_flagset"));
+    assertThat(parser.asListOfExplicitOptions()).isEmpty();
+    assertThat(parser.canonicalize()).contains("--foo=set_by_flagset");
+  }
+
+  @Test
+  public void testOptionsParser_getUserOptions_excludesInvocationPolicy() throws Exception {
+    OptionsParser parser =
+        OptionsParser.builder()
+            .optionsClasses(ExpandingOptions.class, ExpandingOptionsFallback.class)
+            .build();
+    parser.parseWithSourceFunction(
+        PriorityCategory.RC_FILE, o -> "Invocation policy", ImmutableList.of("--foo"), null);
+    assertThat(parser.getUserOptions()).isEmpty();
+
+    parser.parseWithSourceFunction(
+        PriorityCategory.RC_FILE, o -> ".bazelrc", ImmutableList.of("--foo"), null);
+
+    assertThat(parser.getUserOptions().keySet()).containsExactly("--foo", "--nobar");
   }
 
   private static OptionInstanceOrigin createInvocationPolicyOrigin() {

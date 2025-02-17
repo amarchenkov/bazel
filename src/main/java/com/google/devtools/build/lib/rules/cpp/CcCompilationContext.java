@@ -42,7 +42,6 @@ import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import java.util.AbstractCollection;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -574,8 +573,8 @@ public final class CcCompilationContext implements CcCompilationContextApi<Artif
     }
   }
 
-  /** @return modules maps from direct dependencies. */
-  public Iterable<Artifact> getDirectModuleMaps() {
+  /** Returns modules maps from direct dependencies. */
+  public ImmutableList<Artifact> getDirectModuleMaps() {
     return directModuleMaps;
   }
 
@@ -588,8 +587,8 @@ public final class CcCompilationContext implements CcCompilationContextApi<Artif
   }
 
   /**
-   * @return all declared headers of the current module if the current target is compiled as a
-   *     module.
+   * Returns all declared headers of the current module if the current target is compiled as a
+   * module.
    */
   ImmutableList<Artifact> getHeaderModuleSrcs(boolean separateModule) {
     if (separateModule) {
@@ -644,7 +643,7 @@ public final class CcCompilationContext implements CcCompilationContextApi<Artif
         headerTokens.build());
   }
 
-  /** @return the C++ module map of the owner. */
+  /** Returns the C++ module map of the owner. */
   public CppModuleMap getCppModuleMap() {
     return cppModuleMap;
   }
@@ -697,7 +696,6 @@ public final class CcCompilationContext implements CcCompilationContextApi<Artif
 
   /** Builder class for {@link CcCompilationContext}. */
   public static class Builder {
-    private String purpose;
     private final NestedSetBuilder<Artifact> compilationPrerequisites =
         NestedSetBuilder.stableOrder();
     private final TransitiveSetHelper<PathFragment> includeDirs = new TransitiveSetHelper<>();
@@ -722,24 +720,6 @@ public final class CcCompilationContext implements CcCompilationContextApi<Artif
 
     /** Creates a new builder for a {@link CcCompilationContext} instance. */
     private Builder() {}
-
-    /**
-     * Overrides the purpose of this context. This is useful if a Target needs more than one
-     * CcCompilationContext. (The purpose is used to construct the name of the prerequisites
-     * middleman for the context, and all artifacts for a given Target must have distinct names.)
-     *
-     * @param purpose must be a string which is suitable for use as a filename. A single rule may
-     *     have many middlemen with distinct purposes.
-     */
-    @CanIgnoreReturnValue
-    public Builder setPurpose(String purpose) {
-      this.purpose = purpose;
-      return this;
-    }
-
-    public String getPurpose() {
-      return purpose;
-    }
 
     /**
      * Merges the {@link CcCompilationContext} of a dependency into this one by adding the contents
@@ -1147,7 +1127,7 @@ public final class CcCompilationContext implements CcCompilationContextApi<Artif
    * Gathers data about the PIC and no-PIC .pcm files belonging to this context and the associated
    * information about the headers, e.g. modular vs. textual headers and pre-grepped header files.
    *
-   * <p>This also implements a data structure very similar to NestedSet, but chosing slightly
+   * <p>This also implements a data structure very similar to NestedSet, but choosing slightly
    * different trade-offs to account for the specific data stored in here, specifically, we know
    * that there is going to be a single entry in every node of the DAG. Contrary to NestedSet, we
    * reuse memoization data from dependencies to conserve both runtime and memory. Experiments have
@@ -1333,9 +1313,9 @@ public final class CcCompilationContext implements CcCompilationContextApi<Artif
     public static class Builder {
       private DerivedArtifact headerModule = null;
       private DerivedArtifact picHeaderModule = null;
-      private final Set<Artifact> modularPublicHeaders = new HashSet<>();
-      private final Set<Artifact> modularPrivateHeaders = new HashSet<>();
-      private final Set<Artifact> textualHeaders = new HashSet<>();
+      private final LinkedHashSet<Artifact> modularPublicHeaders = new LinkedHashSet<>();
+      private final LinkedHashSet<Artifact> modularPrivateHeaders = new LinkedHashSet<>();
+      private final LinkedHashSet<Artifact> textualHeaders = new LinkedHashSet<>();
       private Collection<Artifact> separateModuleHeaders = ImmutableList.of();
       private DerivedArtifact separateModule = null;
       private DerivedArtifact separatePicModule = null;

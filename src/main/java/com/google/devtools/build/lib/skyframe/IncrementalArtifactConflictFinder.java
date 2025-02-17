@@ -28,6 +28,7 @@ import com.google.devtools.build.lib.actions.ActionAnalysisMetadata;
 import com.google.devtools.build.lib.actions.ActionConflictException;
 import com.google.devtools.build.lib.actions.ActionLookupKey;
 import com.google.devtools.build.lib.actions.ActionLookupValue;
+import com.google.devtools.build.lib.actions.Actions;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.actions.MutableActionGraph;
 import com.google.devtools.build.lib.concurrent.AbstractQueueVisitor;
@@ -44,13 +45,12 @@ import com.google.devtools.build.lib.vfs.PathFragment;
 import com.google.devtools.build.skyframe.SkyKey;
 import com.google.devtools.build.skyframe.SkyValue;
 import com.google.devtools.build.skyframe.WalkableGraph;
-import java.util.ArrayList;
-import java.util.Collections;
+import java.util.Collection;
 import java.util.Iterator;
-import java.util.List;
 import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
@@ -234,8 +234,7 @@ public final class IncrementalArtifactConflictFinder {
     ConcurrentMap<ActionAnalysisMetadata, ActionConflictException> temporaryBadActionMap =
         new ConcurrentHashMap<>();
 
-    List<ListenableFuture<Void>> actionCheckingFutures =
-        Collections.synchronizedList(new ArrayList<>());
+    Collection<ListenableFuture<Void>> actionCheckingFutures = new ConcurrentLinkedQueue<>();
 
     CountDownLatch toWaitFor = null;
     CountDownLatch mySignal = null;
@@ -322,6 +321,10 @@ public final class IncrementalArtifactConflictFinder {
       MutableActionGraph actionGraph,
       ConcurrentMap<String, Object> pathFragmentTrieRoot,
       ConcurrentMap<ActionAnalysisMetadata, ActionConflictException> badActionMap) {
+    if (alv.getNumActions() == 0) {
+      // No actions on deserialized ALVs.
+      return null;
+    }
     for (ActionAnalysisMetadata action : alv.getActions()) {
       try {
         actionGraph.registerAction(action);
@@ -409,30 +412,40 @@ public final class IncrementalArtifactConflictFinder {
 
       if (existingPathIsPrefixOfNew || newPathIsPrefixOfExisting) {
         Artifact conflictingExistingArtifact = getOwningArtifactFromTrie(matchingChildNode);
-        ActionAnalysisMetadata priorAction =
-            Preconditions.checkNotNull(
-                actionGraph.getGeneratingAction(conflictingExistingArtifact),
-                conflictingExistingArtifact);
-        ActionAnalysisMetadata currentAction =
-            Preconditions.checkNotNull(actionGraph.getGeneratingAction(newArtifact), newArtifact);
-        ActionConflictException exception =
-            ActionConflictException.createPrefix(
-                conflictingExistingArtifact, newArtifact, priorAction, currentAction);
+
         // If 2 paths collide, we need to update the Trie to contain only the shorter one.
         // This is required for correctness: the set of subsequent paths that could conflict with
         // the longer path is a subset of that of the shorter path.
+        Artifact prefix;
+        Artifact child;
         if (newPathIsPrefixOfExisting) {
           existingNonLeafNode.put(newSegment, newArtifact);
+          prefix = newArtifact;
+          child = conflictingExistingArtifact;
+        } else {
+          prefix = conflictingExistingArtifact;
+          child = newArtifact;
         }
 
-        if (badActionMap == null) {
-          throw exception;
+        if (!Actions.isRunfilesArtifactPair(prefix, child)) {
+          ActionAnalysisMetadata priorAction =
+              Preconditions.checkNotNull(
+                  actionGraph.getGeneratingAction(conflictingExistingArtifact),
+                  conflictingExistingArtifact);
+          ActionAnalysisMetadata currentAction =
+              Preconditions.checkNotNull(actionGraph.getGeneratingAction(newArtifact), newArtifact);
+          ActionConflictException exception =
+              ActionConflictException.createPrefix(
+                  conflictingExistingArtifact, newArtifact, priorAction, currentAction);
+          if (badActionMap == null) {
+            throw exception;
+          }
+
+          badActionMap.put(priorAction, exception);
+          badActionMap.put(currentAction, exception);
+
+          break;
         }
-
-        badActionMap.put(priorAction, exception);
-        badActionMap.put(currentAction, exception);
-
-        break;
       }
       existingTrieNode = matchingChildNode;
     }
@@ -459,14 +472,14 @@ public final class IncrementalArtifactConflictFinder {
   /** Visit the transitive closure of {@code key} and check for conflicts among the actions. */
   private final class CheckForConflictsUnderKey implements Runnable {
     private final ActionLookupKey key;
-    private final List<ListenableFuture<Void>> actionCheckingFutures;
+    private final Collection<ListenableFuture<Void>> actionCheckingFutures;
     private final ConcurrentMap<ActionAnalysisMetadata, ActionConflictException> badActionMap;
 
     private final Set<ActionLookupKey> dedupSet;
 
     private CheckForConflictsUnderKey(
         ActionLookupKey key,
-        List<ListenableFuture<Void>> actionCheckingFutures,
+        Collection<ListenableFuture<Void>> actionCheckingFutures,
         ConcurrentMap<ActionAnalysisMetadata, ActionConflictException> badActionMap,
         Set<ActionLookupKey> dedupSet) {
       this.key = key;

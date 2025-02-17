@@ -32,6 +32,7 @@ import com.google.devtools.build.lib.analysis.BlazeDirectories;
 import com.google.devtools.build.lib.analysis.BuildInfoEvent;
 import com.google.devtools.build.lib.analysis.config.AdditionalConfigurationChangeEvent;
 import com.google.devtools.build.lib.analysis.config.CoreOptions;
+import com.google.devtools.build.lib.analysis.test.TestConfiguration.TestOptions;
 import com.google.devtools.build.lib.bazel.repository.downloader.DelegatingDownloader;
 import com.google.devtools.build.lib.bazel.repository.downloader.HttpDownloader;
 import com.google.devtools.build.lib.buildtool.BuildRequestOptions;
@@ -52,6 +53,7 @@ import com.google.devtools.build.lib.server.FailureDetails.ExternalRepository;
 import com.google.devtools.build.lib.server.FailureDetails.ExternalRepository.Code;
 import com.google.devtools.build.lib.server.FailureDetails.FailureDetail;
 import com.google.devtools.build.lib.server.FailureDetails.Skyfocus;
+import com.google.devtools.build.lib.server.IdleTask;
 import com.google.devtools.build.lib.skyframe.BuildResultListener;
 import com.google.devtools.build.lib.skyframe.SkyfocusOptions;
 import com.google.devtools.build.lib.skyframe.SkyframeBuildView;
@@ -63,6 +65,7 @@ import com.google.devtools.build.lib.util.DetailedExitCode;
 import com.google.devtools.build.lib.util.io.CommandExtensionReporter;
 import com.google.devtools.build.lib.util.io.OutErr;
 import com.google.devtools.build.lib.util.io.TimestampGranularityMonitor;
+import com.google.devtools.build.lib.versioning.LongVersionGetter;
 import com.google.devtools.build.lib.vfs.FileSystemUtils;
 import com.google.devtools.build.lib.vfs.LocalOutputService;
 import com.google.devtools.build.lib.vfs.OutputService;
@@ -99,6 +102,7 @@ public class CommandEnvironment {
   private final BlazeRuntime runtime;
   private final BlazeWorkspace workspace;
   private final BlazeDirectories directories;
+  private final ConfigFlagDefinitions configFlagDefinitions;
 
   private final UUID commandId; // Unique identifier for the command being run
   private final String buildRequestId; // Unique identifier for the build being run
@@ -132,6 +136,7 @@ public class CommandEnvironment {
   private final HttpDownloader httpDownloader;
   private final DelegatingDownloader delegatingDownloader;
   private final RemoteAnalysisCachingEventListener remoteAnalysisCachingEventListener;
+  private final ImmutableList.Builder<IdleTask> idleTasks = ImmutableList.builder();
 
   private boolean mergedAnalysisAndExecution;
 
@@ -152,9 +157,7 @@ public class CommandEnvironment {
       new AtomicReference<>();
 
   private final Object fileCacheLock = new Object();
-
-  @GuardedBy("fileCacheLock")
-  private InputMetadataProvider fileCache;
+  private volatile InputMetadataProvider fileCache;
 
   private final Object outputDirectoryHelperLock = new Object();
 
@@ -164,6 +167,9 @@ public class CommandEnvironment {
   // List of flags and their values that were added by invocation policy. May contain multiple
   // occurrences of the same flag.
   private ImmutableList<OptionAndRawValue> invocationPolicyFlags = ImmutableList.of();
+
+  @Nullable // Optionally set in `beforeCommand` phase.
+  private LongVersionGetter versionGetter;
 
   /**
    * Gets the {@link RemoteAnalysisCachingEventListener} for this invocation.
@@ -223,7 +229,8 @@ public class CommandEnvironment {
       List<Any> commandExtensions,
       Consumer<String> shutdownReasonConsumer,
       CommandExtensionReporter commandExtensionReporter,
-      int attemptNumber) {
+      int attemptNumber,
+      ConfigFlagDefinitions configFlagDefinitions) {
     checkArgument(attemptNumber >= 1);
 
     this.runtime = runtime;
@@ -243,6 +250,8 @@ public class CommandEnvironment {
     this.blazeModuleEnvironment = new BlazeModuleEnvironment();
     this.timestampGranularityMonitor = new TimestampGranularityMonitor(runtime.getClock());
     this.attemptNumber = attemptNumber;
+    this.configFlagDefinitions = configFlagDefinitions;
+
     // Record the command's starting time again, for use by
     // TimestampGranularityMonitor.waitForTimestampGranularity().
     // This should be done as close as possible to the start of
@@ -327,7 +336,7 @@ public class CommandEnvironment {
         }
       }
       for (Map.Entry<String, String> entry :
-          options.getOptions(CoreOptions.class).testEnvironment) {
+          options.getOptions(TestOptions.class).testEnvironment) {
         if (entry.getValue() == null) {
           visibleTestEnv.add(entry.getKey());
         }
@@ -338,7 +347,7 @@ public class CommandEnvironment {
       String name = entry.getKey();
       String value = entry.getValue();
       if (value == null) {
-        value = System.getenv(name);
+        value = clientEnv.get(name);
       }
       if (value != null) {
         repoEnv.put(name, value);
@@ -434,6 +443,11 @@ public class CommandEnvironment {
     return reporter;
   }
 
+  // TODO: b/395157821 - Replace env.getReporter().getOutErr() with env.getReporterOutErr().
+  public OutErr getReporterOutErr() {
+    return reporter.getOutErr();
+  }
+
   public EventBus getEventBus() {
     return eventBus;
   }
@@ -460,6 +474,11 @@ public class CommandEnvironment {
 
   public OptionsParsingResult getOptions() {
     return options;
+  }
+
+  /** {@code --config} definitions for this invocation. */
+  public ConfigFlagDefinitions getConfigFlagDefinitions() {
+    return configFlagDefinitions;
   }
 
   public InvocationPolicy getInvocationPolicy() {
@@ -917,14 +936,16 @@ public class CommandEnvironment {
 
   /** Returns the file cache to use during this build. */
   public InputMetadataProvider getFileCache() {
-    synchronized (fileCacheLock) {
-      if (fileCache == null) {
-        fileCache =
-            new SingleBuildFileCache(
-                getExecRoot().getPathString(), runtime.getFileSystem(), syscallCache);
+    if (fileCache == null) {
+      synchronized (fileCacheLock) {
+        if (fileCache == null) {
+          fileCache =
+              new SingleBuildFileCache(
+                  getExecRoot().getPathString(), runtime.getFileSystem(), syscallCache);
+        }
       }
-      return fileCache;
     }
+    return fileCache;
   }
 
   public ActionOutputDirectoryHelper getOutputDirectoryHelper() {
@@ -1026,5 +1047,28 @@ public class CommandEnvironment {
 
   public DelegatingDownloader getDownloaderDelegate() {
     return delegatingDownloader;
+  }
+
+  /**
+   * Registers a task to be executed following this command, while the server is idle.
+   *
+   * <p>See {@link IdleServerTasks} for details.
+   */
+  public void addIdleTask(IdleTask idleTask) {
+    idleTasks.add(idleTask);
+  }
+
+  /** Returns the list of registered idle tasks. */
+  public ImmutableList<IdleTask> getIdleTasks() {
+    return idleTasks.build();
+  }
+
+  public void setVersionGetter(LongVersionGetter versionGetter) {
+    this.versionGetter = versionGetter;
+  }
+
+  @Nullable
+  public LongVersionGetter getVersionGetter() {
+    return versionGetter;
   }
 }

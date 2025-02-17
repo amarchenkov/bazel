@@ -20,7 +20,6 @@ import com.google.devtools.build.lib.analysis.util.BuildViewTestCase;
 import com.google.devtools.build.lib.cmdline.PackageIdentifier;
 import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import javax.annotation.Nullable;
-import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
@@ -28,11 +27,6 @@ import org.junit.runners.JUnit4;
 /** Tests the execution of symbolic macro implementations. */
 @RunWith(JUnit4.class)
 public final class RuleFinalizerTest extends BuildViewTestCase {
-
-  @Before
-  public void setUp() throws Exception {
-    setBuildLanguageOptions("--experimental_enable_first_class_macros");
-  }
 
   /**
    * Returns a package by the given name (no leading "//"), or null upon {@link
@@ -62,7 +56,7 @@ public final class RuleFinalizerTest extends BuildViewTestCase {
     scratch.file(
         "pkg/foo.bzl",
         """
-        def _impl(name, targets_of_interest):
+        def _impl(name, visibility, targets_of_interest):
             for r in native.existing_rules().values():
                 if r["name"] in [t.name for t in targets_of_interest]:
                     genrule_name = name + "_" + r["name"] + "_finalize"
@@ -98,7 +92,7 @@ public final class RuleFinalizerTest extends BuildViewTestCase {
     scratch.file(
         "pkg/foo.bzl",
         """
-        def _impl_inner(name):
+        def _impl_inner(name, visibility):
             for r in native.existing_rules().values():
                 if r["name"] == "foo":
                     genrule_name = name + "_" + r["name"] + "_finalize"
@@ -111,7 +105,7 @@ public final class RuleFinalizerTest extends BuildViewTestCase {
 
         my_finalizer_inner = macro(implementation = _impl_inner, finalizer = True)
 
-        def _impl_outer(name):
+        def _impl_outer(name, visibility):
             my_finalizer_inner(name = name + "_inner")
 
         my_finalizer_outer = macro(implementation = _impl_outer, finalizer = True)
@@ -134,7 +128,7 @@ public final class RuleFinalizerTest extends BuildViewTestCase {
     scratch.file(
         "pkg/foo.bzl",
         """
-        def _impl_macro(name, deps):
+        def _impl_macro(name, visibility, deps):
             native.genrule(
                 name = name,
                 srcs = deps,
@@ -144,7 +138,7 @@ public final class RuleFinalizerTest extends BuildViewTestCase {
 
         my_macro = macro(implementation = _impl_macro, attrs = {"deps": attr.label_list()})
 
-        def _impl_finalizer(name):
+        def _impl_finalizer(name, visibility):
             for r in native.existing_rules().values():
                 if r["name"] == "foo":
                     my_macro(name=name + "_" + r["name"] + "_finalize", deps = [r["name"]])
@@ -170,7 +164,7 @@ public final class RuleFinalizerTest extends BuildViewTestCase {
     scratch.file(
         "pkg/foo.bzl",
         """
-        def _impl_finalizer(name):
+        def _impl_finalizer(name, visibility):
             for r in native.existing_rules().values():
                 if r["name"] == "foo":
                     genrule_name = name + "_" + r["name"] + "_finalize"
@@ -183,7 +177,7 @@ public final class RuleFinalizerTest extends BuildViewTestCase {
 
         my_finalizer = macro(implementation = _impl_finalizer, finalizer = True)
 
-        def _impl_macro(name):
+        def _impl_macro(name, visibility):
             my_finalizer(name = name + "_inner")
 
         my_macro = macro(implementation = _impl_macro)
@@ -200,29 +194,54 @@ public final class RuleFinalizerTest extends BuildViewTestCase {
   }
 
   @Test
-  public void finalizer_nativeExistingRules_seesOnlyNonFinalizerTargets_inAllLexicalPositions()
+  public void finalizer_nativeExistingRule_seesOnlyNonFinalizerTargets_inAllLexicalPositions()
       throws Exception {
     scratch.file(
         "pkg/foo.bzl",
         """
-        def _impl_macro(name):
+        EXPECTED = [
+            "top_level_lexically_before_finalizer",
+            "macro_lexically_before_finalizer_inner_lib",
+            "top_level_lexically_after_finalizer",
+            "macro_lexically_after_finalizer_inner_lib",
+        ]
+
+        UNEXPECTED = [
+            "finalizer_inner_lib",
+            "finalizer_inner_macro_inner_lib",
+            "finalizer_inner_finalizer_inner_lib",
+            "other_finalizer_inner_lib",
+            "other_finalizer_inner_macro_inner_lib",
+            "other_finalizer_inner_finalizer_inner_lib",
+        ]
+
+        def check_existing_rules():
+            if (sorted(native.existing_rules().keys()) != sorted(EXPECTED)):
+                fail("native.existing_rules().keys(): " + native.existing_rules().keys())
+            for t in EXPECTED:
+                if native.existing_rule(t) == None:
+                    fail("native.existing_rule(" + t + ") == None")
+            for t in UNEXPECTED:
+                if native.existing_rule(t) != None:
+                    fail("native.existing_rule(" + t + ") != None")
+            print("native.existing_rules and native.existing_rule are as expected")
+
+        def _impl_macro(name, visibility):
             native.cc_library(name = name + "_inner_lib")
 
         my_macro = macro(implementation = _impl_macro)
 
-        def _impl_inner_finalizer(name):
+        def _impl_inner_finalizer(name, visibility):
             native.cc_library(name = name + "_inner_lib")
-            for r in native.existing_rules().values():
-                print("saw " + r["name"])
+            check_existing_rules()
 
         inner_finalizer = macro(implementation = _impl_inner_finalizer, finalizer = True)
 
-        def _impl_finalizer(name):
+        def _impl_finalizer(name, visibility):
             native.cc_library(name = name + "_inner_lib")
             my_macro(name = name + "_inner_macro")
             inner_finalizer(name = name + "_inner_finalizer")
-            for r in native.existing_rules().values():
-                print("saw " + r["name"])
+            check_existing_rules()
 
         my_finalizer = macro(implementation = _impl_finalizer, finalizer = True)
         """);
@@ -240,15 +259,7 @@ public final class RuleFinalizerTest extends BuildViewTestCase {
 
     Package pkg = getPackage("pkg");
     assertPackageNotInError(pkg);
-    assertContainsEventWithFrequency("saw top_level_lexically_before_finalizer", 4);
-    assertContainsEventWithFrequency("saw macro_lexically_before_finalizer_inner_lib", 4);
-    assertContainsEventWithFrequency("saw top_level_lexically_after_finalizer", 4);
-    assertContainsEventWithFrequency("saw macro_lexically_after_finalizer_inner_lib", 4);
-    assertDoesNotContainEvent("saw finalizer_inner_lib");
-    assertDoesNotContainEvent("saw finalizer_inner_macro_inner_lib");
-    assertDoesNotContainEvent("saw finalizer_inner_finalizer_inner_lib");
-    assertDoesNotContainEvent("saw other_finalizer_inner_lib");
-    assertDoesNotContainEvent("saw other_finalizer_inner_macro_inner_lib");
-    assertDoesNotContainEvent("saw other_finalizer_inner_finalizer_inner_lib");
+    assertContainsEventWithFrequency(
+        "native.existing_rules and native.existing_rule are as expected", 4);
   }
 }

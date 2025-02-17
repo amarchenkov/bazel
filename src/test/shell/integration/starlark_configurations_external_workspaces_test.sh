@@ -54,10 +54,6 @@ msys*|mingw*|cygwin*)
   declare -r is_windows=false
   ;;
 esac
-if "$is_windows"; then
-  export MSYS_NO_PATHCONV=1
-  export MSYS2_ARG_CONV_EXCL="*"
-fi
 
 add_to_bazelrc "build --package_path=%workspace%"
 
@@ -125,19 +121,6 @@ EOF
 
 #### TESTS #############################################################
 
-
-function test_set_flag_with_workspace_name() {
-  echo "workspace(name = '${WORKSPACE_NAME}')" > WORKSPACE
-  local -r pkg=$FUNCNAME
-  mkdir -p $pkg
-
-  write_build_setting_bzl "@${WORKSPACE_NAME}"
-
-  bazel build --enable_workspace //$pkg:my_drink --@//$pkg:type="coffee" \
-    > output 2>"$TEST_log" || fail "Expected success"
-
-  expect_log "type=coffee"
-}
 
 function test_reference_inner_repository_flags() {
   local -r pkg=$FUNCNAME

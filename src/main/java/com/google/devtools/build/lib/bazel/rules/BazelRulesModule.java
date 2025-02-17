@@ -17,7 +17,6 @@ package com.google.devtools.build.lib.bazel.rules;
 import com.google.common.collect.ImmutableList;
 import com.google.devtools.build.lib.analysis.ConfiguredRuleClassProvider;
 import com.google.devtools.build.lib.bazel.rules.cpp.BazelCppRuleClasses;
-import com.google.devtools.build.lib.bazel.rules.sh.BazelShRuleClasses;
 import com.google.devtools.build.lib.buildtool.BuildRequest;
 import com.google.devtools.build.lib.exec.ModuleActionContextRegistry;
 import com.google.devtools.build.lib.rules.java.JavaCompileActionContext;
@@ -25,6 +24,7 @@ import com.google.devtools.build.lib.runtime.BlazeModule;
 import com.google.devtools.build.lib.runtime.Command;
 import com.google.devtools.build.lib.runtime.CommandEnvironment;
 import com.google.devtools.build.lib.util.ResourceFileLoader;
+import com.google.devtools.common.options.Converters;
 import com.google.devtools.common.options.Option;
 import com.google.devtools.common.options.OptionDocumentationCategory;
 import com.google.devtools.common.options.OptionEffectTag;
@@ -41,8 +41,16 @@ public final class BazelRulesModule extends BlazeModule {
    * This is where deprecated options used by both Bazel and Blaze but only needed for the build
    * command go to die.
    */
-  @SuppressWarnings("deprecation") // These fields have no JavaDoc by design
   public static class BuildGraveyardOptions extends OptionsBase {
+
+    @Option(
+        name = "j2objc_dead_code_removal",
+        defaultValue = "false",
+        documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
+        effectTags = {OptionEffectTag.NO_OP},
+        help = "Deprecated. No-op.")
+    public boolean removeDeadCode;
+
     @Option(
         name = "experimental_proto_extra_actions",
         defaultValue = "false",
@@ -59,23 +67,6 @@ public final class BazelRulesModule extends BlazeModule {
         effectTags = {OptionEffectTag.NO_OP},
         help = "Deprecated. No-op.")
     public boolean enableFdoProfileAbsolutePath;
-
-    @Option(
-        name = "incompatible_disallow_unsound_directory_outputs",
-        defaultValue = "true",
-        documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
-        metadataTags = OptionMetadataTag.INCOMPATIBLE_CHANGE,
-        effectTags = {OptionEffectTag.NO_OP},
-        help = "Deprecated. No-op.")
-    public boolean disallowUnsoundDirectoryOutputs;
-
-    @Option(
-        name = "experimental_use_scheduling_middlemen",
-        defaultValue = "false",
-        documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
-        effectTags = {OptionEffectTag.NO_OP},
-        help = "Deprecated. No-op.")
-    public boolean useSchedulingMiddlemen;
 
     @Option(
         name = "experimental_genquery_use_graphless_query",
@@ -302,10 +293,17 @@ public final class BazelRulesModule extends BlazeModule {
         help = "No-op",
         oldName = "incompatible_build_transitive_python_runfiles")
     public boolean buildTransitiveRunfilesTrees;
+
+    @Option(
+        name = "experimental_use_new_worker_pool",
+        defaultValue = "true",
+        documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
+        effectTags = {OptionEffectTag.NO_OP},
+        help = "No-op")
+    public boolean useNewWorkerPool;
   }
 
   /** This is where deprecated Bazel-specific options only used by the build command go to die. */
-  @SuppressWarnings("deprecation") // These fields have no JavaDoc by design
   public static final class BazelBuildGraveyardOptions extends BuildGraveyardOptions {
     @Option(
         name = "incompatible_load_python_rules_from_bzl",
@@ -390,6 +388,15 @@ public final class BazelRulesModule extends BlazeModule {
             + " migration directions";
 
     @Option(
+        name = "android_sdk",
+        defaultValue = "",
+        documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
+        effectTags = {OptionEffectTag.UNKNOWN},
+        help = "No-op",
+        deprecationWarning = ANDROID_FLAG_DEPRECATION)
+    public String sdk;
+
+    @Option(
         name = "android_cpu",
         defaultValue = "",
         documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
@@ -424,6 +431,16 @@ public final class BazelRulesModule extends BlazeModule {
         help = "No-op",
         deprecationWarning = ANDROID_FLAG_DEPRECATION)
     public boolean incompatibleUseToolchainResolution;
+
+    @Option(
+        name = "fat_apk_cpu",
+        converter = Converters.CommaSeparatedOptionSetConverter.class,
+        defaultValue = "armeabi-v7a",
+        documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
+        effectTags = {OptionEffectTag.NO_OP},
+        help = "No-op",
+        deprecationWarning = ANDROID_FLAG_DEPRECATION)
+    public List<String> fatApkCpus;
   }
 
   /**
@@ -440,6 +457,15 @@ public final class BazelRulesModule extends BlazeModule {
         metadataTags = {OptionMetadataTag.EXPERIMENTAL},
         help = "No-op")
     public String autoCpuEnvironmentGroup;
+
+    @Option(
+        name = "incompatible_top_level_aspects_require_providers",
+        defaultValue = "true",
+        documentationCategory = OptionDocumentationCategory.STARLARK_SEMANTICS,
+        metadataTags = {OptionMetadataTag.INCOMPATIBLE_CHANGE},
+        effectTags = {OptionEffectTag.NO_OP},
+        help = "No-op")
+    public boolean incompatibleTopLevelAspectsRequireProviders;
 
     @Option(
         name = "separate_aspect_deps",
@@ -530,6 +556,23 @@ public final class BazelRulesModule extends BlazeModule {
     public boolean incompatibleUsePlusInRepoNames;
 
     @Option(
+        name = "enable_bzlmod",
+        oldName = "experimental_enable_bzlmod",
+        defaultValue = "true",
+        documentationCategory = OptionDocumentationCategory.STARLARK_SEMANTICS,
+        effectTags = OptionEffectTag.LOADING_AND_ANALYSIS,
+        help = "No-op.")
+    public boolean enableBzlmod;
+
+    @Option(
+        name = "enable_workspace",
+        defaultValue = "false",
+        documentationCategory = OptionDocumentationCategory.STARLARK_SEMANTICS,
+        effectTags = OptionEffectTag.LOADING_AND_ANALYSIS,
+        help = "No-op.")
+    public boolean enableWorkspace;
+
+    @Option(
         name = "experimental_announce_profile_path",
         defaultValue = "false",
         documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
@@ -544,6 +587,23 @@ public final class BazelRulesModule extends BlazeModule {
         effectTags = {OptionEffectTag.NO_OP},
         help = "No-op.")
     public boolean incompatibleExistingRulesImmutableView;
+
+    // Safe to delete after July 2025
+    @Option(
+        name = "incompatible_no_package_distribs",
+        defaultValue = "false",
+        documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
+        effectTags = {OptionEffectTag.NO_OP},
+        help = "No-op.")
+    public boolean incompatibleNoPackageDistribs;
+
+    @Option(
+        name = "experimental_action_resource_set",
+        defaultValue = "true",
+        documentationCategory = OptionDocumentationCategory.STARLARK_SEMANTICS,
+        effectTags = {OptionEffectTag.NO_OP},
+        help = "No-op.")
+    public boolean experimentalActionResourceSet;
   }
 
   @Override
@@ -558,12 +618,7 @@ public final class BazelRulesModule extends BlazeModule {
       builder.addWorkspaceFileSuffix(
           ResourceFileLoader.loadResource(BazelRulesModule.class, "xcode_configure.WORKSPACE"));
       builder.addWorkspaceFileSuffix(
-          ResourceFileLoader.loadResource(BazelShRuleClasses.class, "sh_configure.WORKSPACE"));
-
-      // Load rules_license, which is needed for license attestations for many rules, including
-      // things in @bazel_tools
-      builder.addWorkspaceFileSuffix(
-          ResourceFileLoader.loadResource(BazelRulesModule.class, "rules_license.WORKSPACE"));
+          ResourceFileLoader.loadResource(BazelRulesModule.class, "rules_suffix.WORKSPACE"));
     } catch (IOException e) {
       throw new IllegalStateException(e);
     }

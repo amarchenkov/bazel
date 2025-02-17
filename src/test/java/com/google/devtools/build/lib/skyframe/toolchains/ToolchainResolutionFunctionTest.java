@@ -66,8 +66,10 @@ public class ToolchainResolutionFunctionTest extends ToolchainTestCase {
         ImmutableList.of("//constraints:linux"),
         "baz");
     rewriteModuleDotBazel(
-        "register_toolchains('//extra:extra_toolchain_linux', '//extra:extra_toolchain_mac')",
-        "register_execution_platforms('//platforms:mac', '//platforms:linux')");
+        """
+        register_toolchains("//extra:extra_toolchain_linux", "//extra:extra_toolchain_mac")
+        register_execution_platforms("//platforms:mac", "//platforms:linux")
+        """);
 
     useConfiguration("--platforms=//platforms:linux");
     ToolchainContextKey key =
@@ -103,7 +105,9 @@ public class ToolchainResolutionFunctionTest extends ToolchainTestCase {
         ImmutableList.of("//constraints:linux"),
         "baz");
     rewriteModuleDotBazel(
-        "register_toolchains('//extra:extra_toolchain_linux', '//extra:extra_toolchain_mac')");
+        """
+        register_toolchains("//extra:extra_toolchain_linux", "//extra:extra_toolchain_mac")
+        """);
 
     useConfiguration("--platforms=//platforms:linux", "--host_platform=//platforms:linux");
     ToolchainContextKey key =
@@ -146,7 +150,9 @@ public class ToolchainResolutionFunctionTest extends ToolchainTestCase {
         alias(name = 'linux', actual = '//platforms:linux')
         """);
     rewriteModuleDotBazel(
-        "register_toolchains('//extra:extra_toolchain_linux', '//extra:extra_toolchain_mac')");
+        """
+        register_toolchains("//extra:extra_toolchain_linux", "//extra:extra_toolchain_mac")
+        """);
 
     useConfiguration("--platforms=//platforms:linux", "--host_platform=//alias:linux");
     ToolchainContextKey key =
@@ -186,8 +192,10 @@ public class ToolchainResolutionFunctionTest extends ToolchainTestCase {
         ImmutableList.of("//constraints:linux"),
         "baz");
     rewriteModuleDotBazel(
-        "register_toolchains('//extra:extra_toolchain_linux', '//extra:extra_toolchain_mac')",
-        "register_execution_platforms('//platforms:mac', '//platforms:linux')");
+        """
+        register_toolchains("//extra:extra_toolchain_linux", "//extra:extra_toolchain_mac")
+        register_execution_platforms("//platforms:mac", "//platforms:linux")
+        """);
 
     useConfiguration("--platforms=//platforms:linux");
     ToolchainContextKey key =
@@ -218,8 +226,10 @@ public class ToolchainResolutionFunctionTest extends ToolchainTestCase {
         ImmutableList.of("//constraints:linux"),
         "baz");
     rewriteModuleDotBazel(
-        "register_toolchains('//extra:extra_toolchain_mac')",
-        "register_execution_platforms('//platforms:mac', '//platforms:linux')");
+        """
+        register_toolchains("//extra:extra_toolchain_mac")
+        register_execution_platforms("//platforms:mac", "//platforms:linux")
+        """);
 
     useConfiguration("--platforms=//platforms:linux");
     ToolchainContextKey key =
@@ -250,8 +260,10 @@ public class ToolchainResolutionFunctionTest extends ToolchainTestCase {
         ImmutableList.of("//constraints:linux"),
         "baz");
     rewriteModuleDotBazel(
-        "register_toolchains('//extra:extra_toolchain_mac')",
-        "register_execution_platforms('//platforms:linux', '//platforms:mac')");
+        """
+        register_toolchains("//extra:extra_toolchain_mac")
+        register_execution_platforms("//platforms:linux", "//platforms:mac")
+        """);
 
     useConfiguration("--platforms=//platforms:linux");
     ToolchainContextKey key =
@@ -288,8 +300,10 @@ public class ToolchainResolutionFunctionTest extends ToolchainTestCase {
     ToolchainTypeRequirement extraOptionalToolchainType =
         ToolchainTypeRequirement.builder(extraOptionalToolchainTypeLabel).mandatory(false).build();
     rewriteModuleDotBazel(
-        "register_toolchains('//extra:extra_toolchain_mac')",
-        "register_execution_platforms('//platforms:linux', '//platforms:mac')");
+        """
+        register_toolchains("//extra:extra_toolchain_mac")
+        register_execution_platforms('//platforms:linux', '//platforms:mac')
+        """);
 
     useConfiguration("--platforms=//platforms:linux");
     ToolchainContextKey key =
@@ -331,7 +345,10 @@ public class ToolchainResolutionFunctionTest extends ToolchainTestCase {
         ImmutableList.of("//constraints:linux"),
         "baz");
     rewriteModuleDotBazel(
-        "register_toolchains('//main:all',)", "register_execution_platforms('//platforms:linux')");
+        """
+        register_toolchains("//main:all")
+        register_execution_platforms("//platforms:linux")
+        """);
 
     useConfiguration("--platforms=//platforms:linux");
     ToolchainContextKey key =
@@ -370,7 +387,47 @@ public class ToolchainResolutionFunctionTest extends ToolchainTestCase {
         .hasErrorEntryForKeyThat(key)
         .hasExceptionThat()
         .hasMessageThat()
-        .contains("No matching toolchains found for types //toolchain:test_toolchain");
+        .isEqualTo(
+            """
+No matching toolchains found for types:
+  //toolchain:test_toolchain
+To debug, rerun with --toolchain_resolution_debug='//toolchain:test_toolchain'
+For more information on platforms or toolchains see https://bazel.build/concepts/platforms-intro.\
+""");
+  }
+
+  @Test
+  public void resolve_mandatory_missing_customPlatformMessage() throws Exception {
+    scratch.appendFile(
+        "platforms/BUILD",
+        """
+        platform(
+            name = "linux_custom_message",
+            parents = [":linux"],
+            missing_toolchain_error = "Check custom docs for setup instructions",
+        )
+        """);
+
+    // There is no toolchain for the requested type.
+    useConfiguration("--platforms=//platforms:linux_custom_message");
+    ToolchainContextKey key =
+        ToolchainContextKey.key()
+            .configurationKey(targetConfigKey)
+            .toolchainTypes(testToolchainType)
+            .build();
+
+    EvaluationResult<UnloadedToolchainContext> result = invokeToolchainResolution(key);
+
+    assertThatEvaluationResult(result)
+        .hasErrorEntryForKeyThat(key)
+        .hasExceptionThat()
+        .hasMessageThat()
+        .contains("Check custom docs for setup instructions");
+    assertThatEvaluationResult(result)
+        .hasErrorEntryForKeyThat(key)
+        .hasExceptionThat()
+        .hasMessageThat()
+        .doesNotContain("see https://bazel.build/concepts/platforms-intro");
   }
 
   @Test
@@ -394,7 +451,10 @@ public class ToolchainResolutionFunctionTest extends ToolchainTestCase {
         ImmutableList.of("//constraints:linux"),
         "baz");
     rewriteModuleDotBazel(
-        "register_toolchains('//main:all',)", "register_execution_platforms('//platforms:linux')");
+        """
+        register_toolchains("//main:all")
+        register_execution_platforms("//platforms:linux")
+        """);
 
     useConfiguration("--platforms=//platforms:linux");
     ToolchainContextKey key =
@@ -431,7 +491,10 @@ public class ToolchainResolutionFunctionTest extends ToolchainTestCase {
         ImmutableList.of("//constraints:linux"),
         "baz");
     rewriteModuleDotBazel(
-        "register_toolchains('//main:all',)", "register_execution_platforms('//platforms:linux')");
+        """
+        register_toolchains("//main:all")
+        register_execution_platforms("//platforms:linux")
+        """);
 
     useConfiguration("--platforms=//platforms:linux");
     ToolchainContextKey key =
@@ -465,8 +528,10 @@ public class ToolchainResolutionFunctionTest extends ToolchainTestCase {
         ImmutableList.of("//constraints:linux"),
         "baz");
     rewriteModuleDotBazel(
-        "register_toolchains('//extra:extra_toolchain_linux')",
-        "register_execution_platforms('//platforms:linux')");
+        """
+        register_toolchains("//extra:extra_toolchain_linux")
+        register_execution_platforms("//platforms:linux")
+        """);
 
     // Set up an alias for the toolchain type.
     Label aliasedToolchainTypeLabel = Label.parseCanonicalUnchecked("//alias:toolchain_type");
@@ -495,7 +560,10 @@ public class ToolchainResolutionFunctionTest extends ToolchainTestCase {
   @Test
   public void resolve_noToolchainType() throws Exception {
     scratch.file("host/BUILD", "platform(name = 'host')");
-    rewriteModuleDotBazel("register_execution_platforms('//platforms:mac', '//platforms:linux')");
+    rewriteModuleDotBazel(
+        """
+        register_execution_platforms("//platforms:mac", "//platforms:linux")
+        """);
 
     useConfiguration("--host_platform=//host:host", "--platforms=//platforms:linux");
     ToolchainContextKey key = ToolchainContextKey.key().configurationKey(targetConfigKey).build();
@@ -541,8 +609,14 @@ public class ToolchainResolutionFunctionTest extends ToolchainTestCase {
         )
         """);
     rewriteModuleDotBazel(
-        "register_execution_platforms('//platforms:mac', '//platforms:linux',",
-        "    '//sample:sample_a', '//sample:sample_b')");
+        """
+        register_execution_platforms(
+            "//platforms:mac",
+            "//platforms:linux",
+            "//sample:sample_a",
+            "//sample:sample_b",
+        )
+        """);
 
     useConfiguration("--host_platform=//host:host", "--platforms=//platforms:linux");
     ToolchainContextKey key =
@@ -631,6 +705,56 @@ public class ToolchainResolutionFunctionTest extends ToolchainTestCase {
         .hasExceptionThat()
         .isInstanceOf(InvalidToolchainTypeException.class);
     // Only one of the missing types will be reported, so do not check the specific error message.
+  }
+
+  @Test
+  public void resolve_invalidToolchainType() throws Exception {
+    reporter.removeHandler(failFastHandler);
+    scratch.file("fake/toolchain/BUILD", "filegroup(name = 'not_a_toolchain')");
+    useConfiguration("--host_platform=//platforms:linux", "--platforms=//platforms:mac");
+    ToolchainContextKey key =
+        ToolchainContextKey.key()
+            .configurationKey(targetConfigKey)
+            .toolchainTypes(
+                ToolchainTypeRequirement.create(
+                    Label.parseCanonicalUnchecked("//fake/toolchain:not_a_toolchain")))
+            .build();
+
+    EvaluationResult<UnloadedToolchainContext> result = invokeToolchainResolution(key);
+
+    assertThatEvaluationResult(result)
+        .hasErrorEntryForKeyThat(key)
+        .hasExceptionThat()
+        .isInstanceOf(InvalidToolchainTypeException.class);
+    assertThatEvaluationResult(result)
+        .hasErrorEntryForKeyThat(key)
+        .hasExceptionThat()
+        .hasMessageThat()
+        .contains("but does not provide ToolchainTypeInfo");
+  }
+
+  @Test
+  public void resolve_invalidToolchainType_ignored() throws Exception {
+    reporter.removeHandler(failFastHandler);
+    scratch.file("fake/toolchain/BUILD", "filegroup(name = 'not_a_toolchain')");
+    useConfiguration("--host_platform=//platforms:linux", "--platforms=//platforms:mac");
+    ToolchainContextKey key =
+        ToolchainContextKey.key()
+            .configurationKey(targetConfigKey)
+            .toolchainTypes(
+                ToolchainTypeRequirement.builder(
+                        Label.parseCanonicalUnchecked("//fake/toolchain:not_a_toolchain"))
+                    .ignoreIfInvalid(true)
+                    .build())
+            .build();
+
+    EvaluationResult<UnloadedToolchainContext> result = invokeToolchainResolution(key);
+
+    assertThatEvaluationResult(result).hasNoError();
+    UnloadedToolchainContext unloadedToolchainContext = result.get(key);
+    assertThat(unloadedToolchainContext).isNotNull();
+    assertThat(unloadedToolchainContext)
+        .doesntHaveToolchainType("//fake/toolchain:not_a_toolchain");
   }
 
   @Test
@@ -725,8 +849,10 @@ public class ToolchainResolutionFunctionTest extends ToolchainTestCase {
         alias(name = 'linux', actual = '//platforms:linux')
         """);
     rewriteModuleDotBazel(
-        "register_toolchains('//extra:extra_toolchain_linux', '//extra:extra_toolchain_mac')",
-        "register_execution_platforms('//alias:mac', '//alias:linux')");
+        """
+        register_toolchains("//extra:extra_toolchain_linux", "//extra:extra_toolchain_mac")
+        register_execution_platforms('//alias:mac', '//alias:linux')
+        """);
 
     useConfiguration("--platforms=//platforms:linux");
     ToolchainContextKey key =
@@ -820,8 +946,10 @@ public class ToolchainResolutionFunctionTest extends ToolchainTestCase {
         /* targetConstraints= */ ImmutableList.of("//constraints:linux"),
         /* data= */ "baz");
     rewriteModuleDotBazel(
-        "register_toolchains('//extra:extra_toolchain_linux', '//extra:extra_toolchain_mac')",
-        "register_execution_platforms('//platforms:mac', '//platforms:linux')");
+        """
+        register_toolchains("//extra:extra_toolchain_linux", "//extra:extra_toolchain_mac")
+        register_execution_platforms("//platforms:mac", "//platforms:linux")
+        """);
 
     useConfiguration("--platforms=//platforms:linux");
     ToolchainContextKey key =
@@ -904,8 +1032,10 @@ public class ToolchainResolutionFunctionTest extends ToolchainTestCase {
         """);
 
     rewriteModuleDotBazel(
-        "register_toolchains('//a:toolchain', '//b:toolchain')",
-        "register_execution_platforms('//platforms:mac', '//platforms:linux')");
+        """
+        register_toolchains("//a:toolchain", "//b:toolchain")
+        register_execution_platforms("//platforms:mac", "//platforms:linux")
+        """);
 
     useConfiguration("--platforms=//platforms:linux");
     ToolchainContextKey key =
@@ -941,8 +1071,10 @@ public class ToolchainResolutionFunctionTest extends ToolchainTestCase {
         /* targetConstraints= */ ImmutableList.of("//constraints:linux"),
         /* data= */ "baz");
     rewriteModuleDotBazel(
-        "register_toolchains('//extra:extra_toolchain_linux', '//extra:extra_toolchain_mac')",
-        "register_execution_platforms('//platforms:mac', '//platforms:linux')");
+        """
+        register_toolchains("//extra:extra_toolchain_linux", "//extra:extra_toolchain_mac")
+        register_execution_platforms("//platforms:mac", "//platforms:linux")
+        """);
 
     useConfiguration("--platforms=//platforms:linux");
     ToolchainContextKey key =
@@ -988,8 +1120,10 @@ public class ToolchainResolutionFunctionTest extends ToolchainTestCase {
         alias(name = 'linux', actual = '//platforms:linux')
         """);
     rewriteModuleDotBazel(
-        "register_toolchains('//extra:extra_toolchain_linux', '//extra:extra_toolchain_mac')",
-        "register_execution_platforms('//alias:mac', '//alias:linux')");
+        """
+        register_toolchains("//extra:extra_toolchain_linux", "//extra:extra_toolchain_mac")
+        register_execution_platforms("//alias:mac", "//alias:linux")
+        """);
 
     useConfiguration("--platforms=//platforms:linux");
     ToolchainContextKey key =
@@ -1028,7 +1162,9 @@ public class ToolchainResolutionFunctionTest extends ToolchainTestCase {
         /* targetConstraints= */ ImmutableList.of("//constraints:linux"),
         /* data= */ "baz");
     rewriteModuleDotBazel(
-        "register_toolchains('//extra:extra_toolchain_linux', '//extra:extra_toolchain_mac')");
+        """
+        register_toolchains("//extra:extra_toolchain_linux", "//extra:extra_toolchain_mac")
+        """);
 
     useConfiguration("--platforms=//platforms:linux", "--host_platform=//platforms:linux");
     ToolchainContextKey key =
@@ -1077,10 +1213,13 @@ public class ToolchainResolutionFunctionTest extends ToolchainTestCase {
         alias(name = 'linux', actual = '//platforms:linux')
         """);
     rewriteModuleDotBazel(
-        "register_toolchains('//extra:extra_toolchain_linux', '//extra:extra_toolchain_mac')",
-        // This test requires an execution platform that isn't the forced platform in order to
-        // trigger.
-        "register_execution_platforms('//alias:mac')");
+        """
+        register_toolchains("//extra:extra_toolchain_linux", "//extra:extra_toolchain_mac")
+
+        # This test requires an execution platform that isn't the forced platform in order to
+        # trigger.
+        register_execution_platforms("//alias:mac")
+        """);
 
     useConfiguration("--platforms=//platforms:linux", "--host_platform=//alias:linux");
     ToolchainContextKey key =
@@ -1108,7 +1247,10 @@ public class ToolchainResolutionFunctionTest extends ToolchainTestCase {
   public void resolve_forceExecutionPlatform_noRequiredToolchains() throws Exception {
     // This should select execution platform linux, due to the forced execution platform, even
     // though execution platform mac is registered first.
-    rewriteModuleDotBazel("register_execution_platforms('//platforms:mac', '//platforms:linux')");
+    rewriteModuleDotBazel(
+        """
+        register_execution_platforms("//platforms:mac", "//platforms:linux")
+        """);
 
     useConfiguration("--platforms=//platforms:linux");
     ToolchainContextKey key =
@@ -1132,8 +1274,10 @@ public class ToolchainResolutionFunctionTest extends ToolchainTestCase {
     // It would be absolutely insane for a user to have a toolchain w/ a config_setting that reads a
     // config_feature_flag; however, should still test the InvalidConfigurationException codepath.
     rewriteModuleDotBazel(
-        "register_toolchains('//strange:strange_toolchain')",
-        "register_execution_platforms('//platforms:mac', '//platforms:linux')");
+        """
+        register_toolchains("//strange:strange_toolchain")
+        register_execution_platforms("//platforms:mac", "//platforms:linux")
+        """);
     scratch.file(
         "strange/BUILD",
         """
@@ -1185,7 +1329,6 @@ public class ToolchainResolutionFunctionTest extends ToolchainTestCase {
 
         my_rule(
             name = "me",
-            transitive_configs = [":flag"],
         )
         """);
     // Need this so the feature flag actually gone from the configuration.
@@ -1194,7 +1337,205 @@ public class ToolchainResolutionFunctionTest extends ToolchainTestCase {
     assertThat(getConfiguredTarget("//rule:me")).isNull();
     assertContainsEvent(
         "Unrecoverable errors resolving config_setting associated with"
-            + " //strange:strange_test_toolchain: For config_setting flagged, Feature flag"
+            + " //strange:strange_toolchain: For config_setting flagged, Feature flag"
             + " //strange:flag was accessed in a configuration it is not present in.");
+  }
+
+  @Test
+  public void resolve_checkPlatformAllowedToolchains_match() throws Exception {
+    // Define two new execution platforms, only one of which is compatible with the test toolchain.
+    scratch.file(
+        "allowed/BUILD",
+        """
+        platform(
+            name = "allows_single_toolchain",
+            check_toolchain_types = True,
+            allowed_toolchain_types = [
+                "//toolchain:test_toolchain",
+            ],
+        )
+
+        platform(
+            name = "allows_all",
+        )
+        """);
+    addToolchain("toolchain", "toolchain_impl", ImmutableList.of(), ImmutableList.of(), "baz");
+    rewriteModuleDotBazel(
+        """
+        register_toolchains("//toolchain:toolchain_impl")
+        register_execution_platforms("//allowed:allows_single_toolchain", "//allowed:allows_all")
+        """);
+
+    ToolchainContextKey key =
+        ToolchainContextKey.key()
+            .configurationKey(targetConfigKey)
+            .toolchainTypes(testToolchainType)
+            .build();
+
+    EvaluationResult<UnloadedToolchainContext> result = invokeToolchainResolution(key);
+
+    assertThatEvaluationResult(result).hasNoError();
+    UnloadedToolchainContext unloadedToolchainContext = result.get(key);
+    assertThat(unloadedToolchainContext).isNotNull();
+
+    // The platform allows the required toolchain type, so it is selected.
+    assertThat(unloadedToolchainContext).hasExecutionPlatform("//allowed:allows_single_toolchain");
+  }
+
+  @Test
+  public void resolve_checkPlatformAllowedToolchains_failsMatch() throws Exception {
+    // Define two new execution platforms, only one of which is compatible with the test toolchain.
+    scratch.file(
+        "allowed/BUILD",
+        """
+        toolchain_type(name = "other_toolchain")
+
+        platform(
+            name = "allows_single_toolchain",
+            check_toolchain_types = True,
+            allowed_toolchain_types = [
+                ":other_toolchain",
+            ],
+        )
+
+        platform(
+            name = "allows_all",
+        )
+        """);
+    addToolchain("toolchain", "toolchain_impl", ImmutableList.of(), ImmutableList.of(), "baz");
+    rewriteModuleDotBazel(
+        """
+        register_toolchains("//toolchain:toolchain_impl")
+        register_execution_platforms("//allowed:allows_single_toolchain", "//allowed:allows_all")
+        """);
+
+    ToolchainContextKey key =
+        ToolchainContextKey.key()
+            .configurationKey(targetConfigKey)
+            .toolchainTypes(testToolchainType)
+            .build();
+
+    EvaluationResult<UnloadedToolchainContext> result = invokeToolchainResolution(key);
+
+    assertThatEvaluationResult(result).hasNoError();
+    UnloadedToolchainContext unloadedToolchainContext = result.get(key);
+    assertThat(unloadedToolchainContext).isNotNull();
+
+    // The platform does not allow the required toolchain type, so it is not selected.
+    assertThat(unloadedToolchainContext).hasExecutionPlatform("//allowed:allows_all");
+  }
+
+  @Test
+  public void resolve_checkPlatformAllowedToolchains_noneRequested_failsMatch() throws Exception {
+    // Define two new execution platforms, only one of which is compatible with the test toolchain.
+    scratch.file(
+        "allowed/BUILD",
+        """
+        platform(
+            name = "allows_single_toolchain",
+            check_toolchain_types = True,
+            allowed_toolchain_types = [
+                "//toolchain:test_toolchain",
+            ],
+        )
+
+        platform(
+            name = "allows_all",
+        )
+        """);
+    addToolchain("toolchain", "toolchain_impl", ImmutableList.of(), ImmutableList.of(), "baz");
+    rewriteModuleDotBazel(
+        """
+        register_toolchains("//toolchain:toolchain_impl")
+        register_execution_platforms("//allowed:allows_single_toolchain", "//allowed:allows_all")
+        """);
+
+    ToolchainContextKey key = ToolchainContextKey.key().configurationKey(targetConfigKey).build();
+
+    EvaluationResult<UnloadedToolchainContext> result = invokeToolchainResolution(key);
+
+    assertThatEvaluationResult(result).hasNoError();
+    UnloadedToolchainContext unloadedToolchainContext = result.get(key);
+    assertThat(unloadedToolchainContext).isNotNull();
+
+    // The platform requires a toolchain type, so it is not selected.
+    assertThat(unloadedToolchainContext).hasExecutionPlatform("//allowed:allows_all");
+  }
+
+  @Test
+  public void resolve_checkPlatformAllowedToolchains_noToolchainType_noneRequested()
+      throws Exception {
+    // Define two new execution platforms, only one of which is compatible with the test toolchain.
+    scratch.file(
+        "allowed/BUILD",
+        """
+        platform(
+            name = "allows_none",
+            check_toolchain_types = True,
+            allowed_toolchain_types = [
+                # Empty, so doesn't match anything.
+            ],
+        )
+
+        platform(
+            name = "allows_all",
+        )
+        """);
+    rewriteModuleDotBazel(
+        """
+        register_execution_platforms("//allowed:allows_none", "//allowed:allows_all")
+        """);
+
+    ToolchainContextKey key = ToolchainContextKey.key().configurationKey(targetConfigKey).build();
+
+    EvaluationResult<UnloadedToolchainContext> result = invokeToolchainResolution(key);
+
+    assertThatEvaluationResult(result).hasNoError();
+    UnloadedToolchainContext unloadedToolchainContext = result.get(key);
+    assertThat(unloadedToolchainContext).isNotNull();
+
+    // The platform doesn't have any toolchains specified.
+    assertThat(unloadedToolchainContext).hasExecutionPlatform("//allowed:allows_all");
+  }
+
+  @Test
+  public void resolve_checkPlatformAllowedToolchains_noToolchainType() throws Exception {
+    // Define two new execution platforms, only one of which is compatible with the test toolchain.
+    scratch.file(
+        "allowed/BUILD",
+        """
+        platform(
+            name = "allows_none",
+            check_toolchain_types = True,
+            allowed_toolchain_types = [
+                # Empty, so doesn't match anything.
+            ],
+        )
+
+        platform(
+            name = "allows_all",
+        )
+        """);
+    addToolchain("toolchain", "toolchain_impl", ImmutableList.of(), ImmutableList.of(), "baz");
+    rewriteModuleDotBazel(
+        """
+        register_toolchains("//toolchain:toolchain_impl")
+        register_execution_platforms("//allowed:allows_none", "//allowed:allows_all")
+        """);
+
+    ToolchainContextKey key =
+        ToolchainContextKey.key()
+            .configurationKey(targetConfigKey)
+            .toolchainTypes(testToolchainType)
+            .build();
+
+    EvaluationResult<UnloadedToolchainContext> result = invokeToolchainResolution(key);
+
+    assertThatEvaluationResult(result).hasNoError();
+    UnloadedToolchainContext unloadedToolchainContext = result.get(key);
+    assertThat(unloadedToolchainContext).isNotNull();
+
+    // The platform doesn't have any toolchains specified, but the request does.
+    assertThat(unloadedToolchainContext).hasExecutionPlatform("//allowed:allows_all");
   }
 }

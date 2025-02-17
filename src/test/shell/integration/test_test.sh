@@ -55,12 +55,9 @@ msys*)
   ;;
 esac
 
-if "$is_windows"; then
-  # Disable MSYS path conversion that converts path-looking command arguments to
-  # Windows paths (even if they arguments are not in fact paths).
-  export MSYS_NO_PATHCONV=1
-  export MSYS2_ARG_CONV_EXCL="*"
-fi
+function set_up() {
+  add_rules_java MODULE.bazel
+}
 
 #### TESTS #############################################################
 
@@ -157,6 +154,7 @@ function test_process_spawned_by_test_doesnt_block_test_from_completing() {
   mkdir -p $pkg || fail "mkdir -p $pkg failed"
 
   cat > $pkg/BUILD <<'EOF'
+load("@rules_java//java:java_test.bzl", "java_test")
 java_test(
     name = "my_test",
     main_class = "test.MyTest",

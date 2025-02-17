@@ -28,6 +28,7 @@ import com.google.common.base.Strings;
 import com.google.devtools.build.lib.bazel.repository.downloader.Checksum;
 import com.google.devtools.build.lib.bazel.repository.downloader.Downloader;
 import com.google.devtools.build.lib.bazel.repository.downloader.HashOutputStream;
+import com.google.devtools.build.lib.clock.BlazeClock;
 import com.google.devtools.build.lib.events.Event;
 import com.google.devtools.build.lib.events.ExtendedEventHandler;
 import com.google.devtools.build.lib.remote.ReferenceCountedChannel;
@@ -38,12 +39,17 @@ import com.google.devtools.build.lib.remote.options.RemoteOptions;
 import com.google.devtools.build.lib.remote.util.TracingMetadataUtils;
 import com.google.devtools.build.lib.remote.util.Utils;
 import com.google.devtools.build.lib.vfs.Path;
+import com.google.protobuf.util.Timestamps;
+import com.google.rpc.Code;
 import io.grpc.CallCredentials;
 import io.grpc.Channel;
 import io.grpc.StatusRuntimeException;
+import io.grpc.protobuf.StatusProto;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.net.URISyntaxException;
 import java.net.URL;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -66,7 +72,7 @@ public class GrpcRemoteDownloader implements AutoCloseable, Downloader {
   private final Optional<CallCredentials> credentials;
   private final RemoteRetrier retrier;
   private final RemoteCacheClient cacheClient;
-  private final DigestFunction.Value digestFunction;
+  private final DigestFunction.Value defaultDigestFunction;
   private final RemoteOptions options;
   private final boolean verboseFailures;
   @Nullable private final Downloader fallbackDownloader;
@@ -83,6 +89,11 @@ public class GrpcRemoteDownloader implements AutoCloseable, Downloader {
   // delimit the qualifier prefix which denotes an HTTP header qualifer from the
   // header name itself.
   private static final String QUALIFIER_HTTP_HEADER_PREFIX = "http_header:";
+  // Same as HTTP_HEADER_PREFIX, but only apply for a specific URL.
+  // The index starts from 0 and corresponds to the URL index in the request.
+  // Server should prefer using the URL-specific header value over the generic header
+  // value when both are present.
+  private static final String QUALIFIER_HTTP_HEADER_URL_PREFIX = "http_header_url:";
 
   public GrpcRemoteDownloader(
       String buildRequestId,
@@ -91,7 +102,7 @@ public class GrpcRemoteDownloader implements AutoCloseable, Downloader {
       Optional<CallCredentials> credentials,
       RemoteRetrier retrier,
       RemoteCacheClient cacheClient,
-      DigestFunction.Value digestFunction,
+      DigestFunction.Value defaultDigestFunction,
       RemoteOptions options,
       boolean verboseFailures,
       @Nullable Downloader fallbackDownloader) {
@@ -101,7 +112,7 @@ public class GrpcRemoteDownloader implements AutoCloseable, Downloader {
     this.credentials = credentials;
     this.retrier = retrier;
     this.cacheClient = cacheClient;
-    this.digestFunction = digestFunction;
+    this.defaultDigestFunction = defaultDigestFunction;
     this.options = options;
     this.verboseFailures = verboseFailures;
     this.fallbackDownloader = fallbackDownloader;
@@ -135,7 +146,14 @@ public class GrpcRemoteDownloader implements AutoCloseable, Downloader {
 
     final FetchBlobRequest request =
         newFetchBlobRequest(
-            options.remoteInstanceName, urls, checksum, canonicalId, digestFunction, headers);
+            options.remoteInstanceName,
+            options.remoteDownloaderPropagateCredentials,
+            urls,
+            checksum,
+            canonicalId,
+            defaultDigestFunction,
+            headers,
+            credentials);
     try {
       FetchBlobResponse response =
           retrier.execute(
@@ -144,6 +162,9 @@ public class GrpcRemoteDownloader implements AutoCloseable, Downloader {
                       channel ->
                           fetchBlockingStub(remoteActionExecutionContext, channel)
                               .fetchBlob(request)));
+      if (response.getStatus().getCode() != Code.OK_VALUE) {
+        throw StatusProto.toStatusRuntimeException(response.getStatus());
+      }
       final Digest blobDigest = response.getBlobDigest();
 
       retrier.execute(
@@ -180,25 +201,61 @@ public class GrpcRemoteDownloader implements AutoCloseable, Downloader {
   @VisibleForTesting
   static FetchBlobRequest newFetchBlobRequest(
       String instanceName,
+      boolean remoteDownloaderPropagateCredentials,
       List<URL> urls,
       Optional<Checksum> checksum,
       String canonicalId,
-      DigestFunction.Value digestFunction,
-      Map<String, List<String>> headers) {
+      DigestFunction.Value defaultDigestFunction,
+      Map<String, List<String>> headers,
+      Credentials credentials)
+      throws IOException {
     FetchBlobRequest.Builder requestBuilder =
-        FetchBlobRequest.newBuilder()
-            .setInstanceName(instanceName)
-            .setDigestFunction(digestFunction);
-    for (URL url : urls) {
+        FetchBlobRequest.newBuilder().setInstanceName(instanceName);
+    for (int i = 0; i < urls.size(); i++) {
+      var url = urls.get(i);
       requestBuilder.addUris(url.toString());
+
+      if (!remoteDownloaderPropagateCredentials) {
+        continue;
+      }
+
+      try {
+        var metadata = credentials.getRequestMetadata(url.toURI());
+        for (var entry : metadata.entrySet()) {
+          for (var value : entry.getValue()) {
+            requestBuilder.addQualifiers(
+                Qualifier.newBuilder()
+                    .setName(QUALIFIER_HTTP_HEADER_URL_PREFIX + i + ":" + entry.getKey())
+                    .setValue(value)
+                    .build());
+          }
+        }
+      } catch (URISyntaxException e) {
+        throw new IOException(e);
+      }
     }
 
     if (checksum.isPresent()) {
+      requestBuilder.setDigestFunction(
+          switch (checksum.get().getKeyType()) {
+            case SHA1 -> DigestFunction.Value.SHA1;
+            case SHA256 -> DigestFunction.Value.SHA256;
+            case SHA384 -> DigestFunction.Value.SHA384;
+            case SHA512 -> DigestFunction.Value.SHA512;
+            case BLAKE3 -> DigestFunction.Value.BLAKE3;
+          });
       requestBuilder.addQualifiers(
           Qualifier.newBuilder()
               .setName(QUALIFIER_CHECKSUM_SRI)
               .setValue(checksum.get().toSubresourceIntegrity())
               .build());
+    } else {
+      requestBuilder.setDigestFunction(defaultDigestFunction);
+      // If no checksum is provided, never accept cached content.
+      // Timestamp is offset by an hour to account for clock skew.
+      requestBuilder.setOldestContentAccepted(
+          Timestamps.fromMillis(
+              BlazeClock.instance().now().plus(Duration.ofHours(1)).toEpochMilli()));
     }
 
     if (!Strings.isNullOrEmpty(canonicalId)) {
@@ -226,7 +283,7 @@ public class GrpcRemoteDownloader implements AutoCloseable, Downloader {
             TracingMetadataUtils.attachMetadataInterceptor(context.getRequestMetadata()))
         .withInterceptors(TracingMetadataUtils.newDownloaderHeadersInterceptor(options))
         .withCallCredentials(credentials.orElse(null))
-        .withDeadlineAfter(options.remoteTimeout.getSeconds(), TimeUnit.SECONDS);
+        .withDeadlineAfter(options.remoteTimeout.toSeconds(), TimeUnit.SECONDS);
   }
 
   private OutputStream newOutputStream(Path destination, Optional<Checksum> checksum)

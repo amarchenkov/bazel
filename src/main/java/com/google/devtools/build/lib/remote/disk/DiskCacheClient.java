@@ -43,7 +43,6 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.time.Instant;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import javax.annotation.Nullable;
@@ -55,51 +54,37 @@ import javax.annotation.Nullable;
  * when they collide.
  *
  * <p>The mtime of an entry reflects the most recent time the entry was stored *or* retrieved. This
- * property may be used to trim the disk cache to the most recently used entries. However, it's not
- * safe to trim the cache at the same time a Bazel process is accessing it.
+ * property may be used to garbage collect the disk cache by deleting the least recently accessed
+ * entries. This may be done by Bazel itself (see {@link DiskCacheGarbageCollectorIdleTask}), by
+ * another Bazel process sharing the disk cache, or by an external process. Although we could have
+ * arranged for an ongoing garbage collection to block a concurrent build, we judge it to not be
+ * worth the extra complexity; assuming that the collection policy is not overly aggressive, the
+ * likelihood of a race condition is fairly small, and an affected build is able to automatically
+ * recover by retrying.
  */
 public class DiskCacheClient {
 
   private static final String AC_DIR = "ac";
   private static final String CAS_DIR = "cas";
   private static final String TMP_DIR = "tmp";
-  private static final String GC_DIR = "gc";
-
-  // Subdirectories excluded from garbage collection.
-  private static final ImmutableSet<String> EXCLUDED_DIRS = ImmutableSet.of(TMP_DIR, GC_DIR);
 
   private final ImmutableMap<Store, Path> storeRootMap;
   private final Path tmpRoot;
+
   private final ListeningExecutorService executorService;
   private final boolean verifyDownloads;
   private final DigestUtil digestUtil;
-
-  @Nullable private final GarbageCollector gc;
-
-  private boolean closed = false;
 
   /**
    * @param verifyDownloads whether verify the digest of downloaded content are the same as the
    *     digest used to index that file.
    */
   public DiskCacheClient(
-      Path root,
-      long maxSizeBytes,
-      DigestUtil digestUtil,
-      ExecutorService executorService,
-      boolean verifyDownloads)
+      Path root, DigestUtil digestUtil, ExecutorService executorService, boolean verifyDownloads)
       throws IOException {
     this.digestUtil = digestUtil;
     this.executorService = MoreExecutors.listeningDecorator(executorService);
     this.verifyDownloads = verifyDownloads;
-
-    Path gcRoot = root.getChild(GC_DIR);
-    if (maxSizeBytes > 0) {
-      gcRoot.createDirectoryAndParents();
-      this.gc = new GarbageCollector(root, GC_DIR, EXCLUDED_DIRS, executorService);
-    } else {
-      this.gc = null;
-    }
 
     Path fnRoot =
         isOldStyleDigestFunction(digestUtil.getDigestFunction())
@@ -129,7 +114,9 @@ public class DiskCacheClient {
    */
   public boolean refresh(Path path) throws IOException {
     try {
-      path.setLastModifiedTime(Instant.now().toEpochMilli());
+      // Use NOW_SENTINEL_TIME instead of obtaining the current time so that the operation succeeds
+      // even when the file has a different owner, as might be the case for a shared cache.
+      path.setLastModifiedTime(Path.NOW_SENTINEL_TIME);
     } catch (FileNotFoundException e) {
       return false;
     }
@@ -144,9 +131,14 @@ public class DiskCacheClient {
    */
   public void captureFile(Path src, Digest digest, Store store) throws IOException {
     Path target = toPath(digest, store);
+
+    if (refresh(target)) {
+      src.delete();
+      return;
+    }
+
     target.getParentDirectory().createDirectoryAndParents();
     src.renameTo(target);
-    var unused = refresh(target);
   }
 
   private ListenableFuture<Void> download(Digest digest, OutputStream out, Store store) {
@@ -270,14 +262,7 @@ public class DiskCacheClient {
         });
   }
 
-  public void close() {
-    if (!closed) {
-      if (gc != null) {
-        gc.close();
-      }
-      closed = true;
-    }
-  }
+  public void close() {}
 
   public ListenableFuture<Void> uploadFile(Digest digest, Path file) {
     return executorService.submit(

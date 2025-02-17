@@ -20,6 +20,7 @@ import static com.google.common.base.Preconditions.checkState;
 import static com.google.common.base.Throwables.throwIfUnchecked;
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.common.collect.ImmutableSet.toImmutableSet;
+import static com.google.common.collect.MoreCollectors.onlyElement;
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.Truth.assertWithMessage;
 import static java.nio.charset.StandardCharsets.ISO_8859_1;
@@ -39,9 +40,9 @@ import com.google.devtools.build.lib.actions.ActionAnalysisMetadata;
 import com.google.devtools.build.lib.actions.ActionGraph;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.actions.Artifact.DerivedArtifact;
+import com.google.devtools.build.lib.actions.Artifact.SourceArtifact;
 import com.google.devtools.build.lib.actions.ExecException;
 import com.google.devtools.build.lib.actions.FileArtifactValue;
-import com.google.devtools.build.lib.actions.FileArtifactValue.InlineFileArtifactValue;
 import com.google.devtools.build.lib.actions.util.ActionsTestUtil;
 import com.google.devtools.build.lib.analysis.BlazeDirectories;
 import com.google.devtools.build.lib.analysis.ConfiguredTarget;
@@ -68,6 +69,8 @@ import com.google.devtools.build.lib.buildtool.BuildTool;
 import com.google.devtools.build.lib.buildtool.buildevent.BuildStartingEvent;
 import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.cmdline.LabelSyntaxException;
+import com.google.devtools.build.lib.cmdline.RepositoryMapping;
+import com.google.devtools.build.lib.cmdline.RepositoryName;
 import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.events.Event;
 import com.google.devtools.build.lib.events.EventCollector;
@@ -112,8 +115,10 @@ import com.google.devtools.build.lib.shell.CommandException;
 import com.google.devtools.build.lib.skyframe.ActionExecutionValue;
 import com.google.devtools.build.lib.skyframe.BuildResultListener;
 import com.google.devtools.build.lib.skyframe.ConfiguredTargetAndData;
+import com.google.devtools.build.lib.skyframe.RepositoryMappingValue;
 import com.google.devtools.build.lib.skyframe.SkyframeExecutor;
 import com.google.devtools.build.lib.skyframe.SkymeldModule;
+import com.google.devtools.build.lib.skyframe.TreeArtifactValue;
 import com.google.devtools.build.lib.skyframe.util.SkyframeExecutorTestUtils;
 import com.google.devtools.build.lib.standalone.StandaloneModule;
 import com.google.devtools.build.lib.testutil.MoreAsserts;
@@ -403,9 +408,12 @@ public abstract class BuildIntegrationTestCase {
       bestEffortDeleteTreesBelow(
           testRoot,
           filename -> {
-            // Bazel runtime still holds the file handle of windows_jni.dll making it impossible to
-            // delete on Windows.
+            // Bazel runtime still holds the file handle of windows_jni.dll or libzstd-jni-xxxx.dll
+            // making it impossible to delete on Windows.
             if (filename.equals("windows_jni.dll")) {
+              return true;
+            }
+            if (filename.startsWith("libzstd-jni") && filename.endsWith(".dll")) {
               return true;
             }
 
@@ -657,6 +665,15 @@ public abstract class BuildIntegrationTestCase {
     runtimeWrapper.addOptions(TestConstants.PRODUCT_SPECIFIC_BUILD_LANG_OPTIONS);
     // TODO(rosica): Remove this once g3 is migrated.
     runtimeWrapper.addOptions("--noincompatible_use_specific_tool_files");
+
+    if (AnalysisMock.get().isThisBazel()) {
+      // We have to explicitly override @bazel_tools to the version in the workspace (which is where
+      // we usually set up mocks), instead of the install base, where it is normally looked up from.
+      // This needs to be done for all BuildIntegrationTestCase subclasses, because the setup here
+      // requires that the install base be separate from the workspace (unlike, say,
+      // BuildViewTestCase).
+      runtimeWrapper.addOptions("--override_repository=bazel_tools=embedded_tools");
+    }
   }
 
   protected void resetOptions() {
@@ -686,6 +703,7 @@ public abstract class BuildIntegrationTestCase {
       return null;
     }
   }
+
   /**
    * Returns the path to the executable that label "target" identifies.
    *
@@ -695,8 +713,12 @@ public abstract class BuildIntegrationTestCase {
    * @param target the label of the target whose executable location is requested.
    */
   protected Path getExecutableLocation(String target)
-      throws LabelSyntaxException, NoSuchPackageException, NoSuchTargetException,
-          InterruptedException, TransitionException, InvalidConfigurationException {
+      throws LabelSyntaxException,
+          NoSuchPackageException,
+          NoSuchTargetException,
+          InterruptedException,
+          TransitionException,
+          InvalidConfigurationException {
     return getExecutable(getConfiguredTarget(target)).getPath();
   }
 
@@ -704,12 +726,37 @@ public abstract class BuildIntegrationTestCase {
    * Given a label (which has typically, but not necessarily, just been built), returns the
    * collection of files that it produces.
    *
-   * @param target the label of the target whose artifacts are requested.
+   * @param target the label of the target whose artifacts are requested
    */
   protected ImmutableList<Artifact> getArtifacts(String target)
-      throws LabelSyntaxException, NoSuchPackageException, NoSuchTargetException,
-          InterruptedException, TransitionException, InvalidConfigurationException {
+      throws LabelSyntaxException,
+          NoSuchPackageException,
+          NoSuchTargetException,
+          InterruptedException,
+          TransitionException,
+          InvalidConfigurationException {
     return getFilesToBuild(getConfiguredTarget(target)).toList();
+  }
+
+  /**
+   * Given a label (which has typically, but not necessarily, just been built), returns the file it
+   * produces ending with the given suffix.
+   *
+   * <p>It is an error if the given target produces multiple files with the given suffix.
+   *
+   * @param target the label of the target whose artifact is requested
+   * @param suffix suffix of the artifact requested
+   */
+  protected Artifact getArtifact(String target, String suffix)
+      throws LabelSyntaxException,
+          NoSuchPackageException,
+          NoSuchTargetException,
+          InterruptedException,
+          TransitionException,
+          InvalidConfigurationException {
+    return getArtifacts(target).stream()
+        .filter(a -> a.getExecPathString().endsWith(suffix))
+        .collect(onlyElement());
   }
 
   /**
@@ -719,9 +766,13 @@ public abstract class BuildIntegrationTestCase {
    * @param target the label of the requested target.
    */
   protected ConfiguredTarget getConfiguredTarget(String target)
-      throws LabelSyntaxException, NoSuchPackageException, NoSuchTargetException,
-          InterruptedException, TransitionException, InvalidConfigurationException {
-    getPackageManager().getTarget(events.reporter(), Label.parseCanonical(target));
+      throws LabelSyntaxException,
+          NoSuchPackageException,
+          NoSuchTargetException,
+          InterruptedException,
+          TransitionException,
+          InvalidConfigurationException {
+    getPackageManager().getTarget(events.reporter(), label(target));
     return getSkyframeExecutor()
         .getConfiguredTargetForTesting(events.reporter(), label(target), getTargetConfiguration());
   }
@@ -813,8 +864,15 @@ public abstract class BuildIntegrationTestCase {
   }
 
   /** Utility function: parse a string as a label. */
-  protected static Label label(String labelString) throws LabelSyntaxException {
-    return Label.parseCanonical(labelString);
+  protected Label label(String labelString) throws LabelSyntaxException, InterruptedException {
+    RepositoryMapping mainRepoMapping =
+        ((RepositoryMappingValue)
+                getSkyframeExecutor()
+                    .getEvaluator()
+                    .getExistingValue(RepositoryMappingValue.key(RepositoryName.MAIN)))
+            .repositoryMapping();
+    return Label.parseWithRepoContext(
+        labelString, Label.RepoContext.of(RepositoryName.MAIN, mainRepoMapping));
   }
 
   protected String run(Artifact executable, String... arguments) throws Exception {
@@ -992,21 +1050,40 @@ public abstract class BuildIntegrationTestCase {
   }
 
   protected String readInlineOutput(Artifact output) throws IOException, InterruptedException {
-    assertThat(output).isInstanceOf(DerivedArtifact.class);
+    FileArtifactValue metadata = getOutputMetadata(output);
+    assertThat(metadata.isInline()).isTrue();
+    return new String(FileSystemUtils.readContentAsLatin1(metadata.getInputStream()));
+  }
 
+  protected FileArtifactValue getOutputMetadata(Artifact output) throws InterruptedException {
+    return getActionExecutionValue(output).getExistingFileArtifactValue(output);
+  }
+
+  protected TreeArtifactValue getTreeArtifactValue(Artifact treeArtifact)
+      throws InterruptedException {
+    return checkNotNull(
+        getActionExecutionValue(treeArtifact).getAllTreeArtifactValues().get(treeArtifact),
+        treeArtifact);
+  }
+
+  protected FileArtifactValue getSourceArtifactMetadata(Artifact sourceArtifact)
+      throws InterruptedException {
+    assertThat(sourceArtifact).isInstanceOf(SourceArtifact.class);
+    SkyValue sourceArtifactValue =
+        getSkyframeExecutor().getEvaluator().getExistingValue(sourceArtifact);
+    assertThat(sourceArtifactValue).isInstanceOf(FileArtifactValue.class);
+    return (FileArtifactValue) sourceArtifactValue;
+  }
+
+  private ActionExecutionValue getActionExecutionValue(Artifact output)
+      throws InterruptedException {
+    assertThat(output).isInstanceOf(DerivedArtifact.class);
     SkyValue actionExecutionValue =
         getSkyframeExecutor()
             .getEvaluator()
             .getExistingValue(((DerivedArtifact) output).getGeneratingActionKey());
     assertThat(actionExecutionValue).isInstanceOf(ActionExecutionValue.class);
-
-    FileArtifactValue fileArtifactValue =
-        ((ActionExecutionValue) actionExecutionValue).getExistingFileArtifactValue(output);
-    assertThat(fileArtifactValue).isInstanceOf(InlineFileArtifactValue.class);
-
-    return new String(
-        FileSystemUtils.readContentAsLatin1(
-            ((InlineFileArtifactValue) fileArtifactValue).getInputStream()));
+    return (ActionExecutionValue) actionExecutionValue;
   }
 
   /**

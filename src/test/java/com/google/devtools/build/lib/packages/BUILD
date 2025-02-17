@@ -17,7 +17,10 @@ filegroup(
 
 java_library(
     name = "PackageTestsUtil",
-    srcs = ["WorkspaceFactoryTestHelper.java"],
+    srcs = [
+        "BuildTypeTestHelper.java",
+        "WorkspaceFactoryTestHelper.java",
+    ],
     deps = [
         "//src/main/java/com/google/devtools/build/lib/cmdline",
         "//src/main/java/com/google/devtools/build/lib/events",
@@ -40,7 +43,6 @@ java_test(
         include = ["*.java"],
         exclude = [
             "BazelDocumentationTest.java",
-            "ExternalPackageTest.java",
             "WorkspaceFactoryTestHelper.java",
         ],
     ),
@@ -73,6 +75,7 @@ java_test(
         "//src/main/java/com/google/devtools/build/lib/packages:exec_group",
         "//src/main/java/com/google/devtools/build/lib/packages:globber",
         "//src/main/java/com/google/devtools/build/lib/packages:package_specification",
+        "//src/main/java/com/google/devtools/build/lib/packages/semantics",
         "//src/main/java/com/google/devtools/build/lib/pkgcache",
         "//src/main/java/com/google/devtools/build/lib/runtime/commands",
         "//src/main/java/com/google/devtools/build/lib/skyframe:bzl_load_value",
@@ -105,7 +108,7 @@ java_test(
         "//third_party:junit4",
         "//third_party:mockito",
         "//third_party:truth",
-        "//third_party/protobuf:protobuf_java",
+        "@com_google_protobuf//:protobuf_java",
         "@maven//:com_google_testparameterinjector_test_parameter_injector",
     ],
 )
@@ -122,7 +125,7 @@ java_test(
         "//src/main/java/com/google/devtools/build/lib/bazel/rules",
         "//third_party:guava",
         "//third_party:junit4",
-        "@bazel_tools//tools/java/runfiles",
+        "@rules_java//java/runfiles",
     ],
 )
 
@@ -161,6 +164,7 @@ java_library(
         "//src/main/java/com/google/devtools/build/lib/bazel/rules/python",
         "//src/main/java/com/google/devtools/build/lib/clock",
         "//src/main/java/com/google/devtools/build/lib/cmdline",
+        "//src/main/java/com/google/devtools/build/lib/events",
         "//src/main/java/com/google/devtools/build/lib/packages",
         "//src/main/java/com/google/devtools/build/lib/packages/semantics",
         "//src/main/java/com/google/devtools/build/lib/pkgcache",
@@ -168,6 +172,7 @@ java_library(
         "//src/main/java/com/google/devtools/build/lib/rules/cpp",
         "//src/main/java/com/google/devtools/build/lib/rules/proto",
         "//src/main/java/com/google/devtools/build/lib/skyframe:precomputed_value",
+        "//src/main/java/com/google/devtools/build/lib/skyframe:repository_mapping_function",
         "//src/main/java/com/google/devtools/build/lib/skyframe:sky_functions",
         "//src/main/java/com/google/devtools/build/lib/skyframe:skyframe_cluster",
         "//src/main/java/com/google/devtools/build/lib/skyframe/packages:PackageFactoryBuilderWithSkyframeForTesting",
@@ -189,6 +194,6 @@ java_library(
         "//third_party:jsr305",
         "//third_party:junit4",
         "//third_party:truth",
-        "@bazel_tools//tools/java/runfiles",
+        "@rules_java//java/runfiles",
     ],
 )

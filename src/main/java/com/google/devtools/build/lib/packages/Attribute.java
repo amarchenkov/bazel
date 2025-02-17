@@ -24,6 +24,7 @@ import com.google.common.base.Verify;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.Interner;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
@@ -33,6 +34,7 @@ import com.google.devtools.build.lib.analysis.TransitiveInfoProvider;
 import com.google.devtools.build.lib.analysis.config.transitions.NoTransition;
 import com.google.devtools.build.lib.analysis.config.transitions.TransitionFactory;
 import com.google.devtools.build.lib.cmdline.Label;
+import com.google.devtools.build.lib.concurrent.BlazeInterners;
 import com.google.devtools.build.lib.events.EventHandler;
 import com.google.devtools.build.lib.packages.RuleClass.Builder.RuleClassNamePredicate;
 import com.google.devtools.build.lib.packages.Type.ConversionException;
@@ -61,6 +63,7 @@ import javax.annotation.concurrent.Immutable;
 import net.starlark.java.eval.Dict;
 import net.starlark.java.eval.EvalException;
 import net.starlark.java.eval.Starlark;
+import net.starlark.java.eval.StarlarkList;
 import net.starlark.java.eval.StarlarkValue;
 import net.starlark.java.eval.Structure;
 
@@ -327,9 +330,14 @@ public final class Attribute implements Comparable<Attribute> {
     public Attribute build(String name) {
       Preconditions.checkState(!name.isEmpty(), "name has not been set");
       if (valueSource == AttributeValueSource.LATE_BOUND) {
-        Preconditions.checkState(isLateBound(name));
+        Preconditions.checkState(isAnalysisDependent(name));
         Preconditions.checkState(!transitionFactory.isSplit());
       }
+
+      if (valueSource == AttributeValueSource.MATERIALIZER) {
+        Preconditions.checkState(isAnalysisDependent(name));
+      }
+
       // TODO(bazel-team): Set the default to be no file type, then remove this check, and also
       // remove all allowedFileTypes() calls without parameters.
 
@@ -436,24 +444,15 @@ public final class Attribute implements Comparable<Attribute> {
     public Builder(String name, Type<TYPE> type) {
       this.name = Preconditions.checkNotNull(name);
       this.type = Preconditions.checkNotNull(type);
-      if (isImplicit(name) || isLateBound(name)) {
-        setPropertyFlag(PropertyFlag.UNDOCUMENTED, "undocumented");
+      if (isImplicit(name) || isAnalysisDependent(name)) {
+        setPropertyFlag(PropertyFlag.UNDOCUMENTED);
       }
     }
 
     @CanIgnoreReturnValue
-    private Builder<TYPE> setPropertyFlag(PropertyFlag flag, String propertyName) {
+    private Builder<TYPE> setPropertyFlag(PropertyFlag flag) {
       propertyFlags.add(flag);
       return this;
-    }
-
-    private static PropertyFlag resolvePropertyFlagByName(String propertyName)
-        throws EvalException {
-      try {
-        return PropertyFlag.valueOf(propertyName);
-      } catch (IllegalArgumentException e) {
-        throw Starlark.errorf("unknown attribute flag '%s'", propertyName);
-      }
     }
 
     /**
@@ -466,8 +465,17 @@ public final class Attribute implements Comparable<Attribute> {
     @CanIgnoreReturnValue
     public Builder<TYPE> setPropertyFlag(String propertyName) throws EvalException {
       PropertyFlag flag = resolvePropertyFlagByName(propertyName);
-      setPropertyFlag(flag, propertyName);
+      setPropertyFlag(flag);
       return this;
+    }
+
+    private static PropertyFlag resolvePropertyFlagByName(String propertyName)
+        throws EvalException {
+      try {
+        return PropertyFlag.valueOf(propertyName);
+      } catch (IllegalArgumentException e) {
+        throw Starlark.errorf("unknown attribute flag '%s'", propertyName);
+      }
     }
 
     @CanIgnoreReturnValue
@@ -479,7 +487,7 @@ public final class Attribute implements Comparable<Attribute> {
 
     /** Makes the built attribute mandatory. */
     public Builder<TYPE> mandatory() {
-      return setPropertyFlag(PropertyFlag.MANDATORY, "mandatory");
+      return setPropertyFlag(PropertyFlag.MANDATORY);
     }
 
     /**
@@ -488,7 +496,7 @@ public final class Attribute implements Comparable<Attribute> {
      */
     public Builder<TYPE> nonEmpty() {
       Preconditions.checkNotNull(type.getListElementType(), "attribute '%s' must be a list", name);
-      return setPropertyFlag(PropertyFlag.NON_EMPTY, "non_empty");
+      return setPropertyFlag(PropertyFlag.NON_EMPTY);
     }
 
     /** Makes the built attribute producing a single artifact. */
@@ -497,7 +505,7 @@ public final class Attribute implements Comparable<Attribute> {
           type.getLabelClass() == LabelClass.DEPENDENCY,
           "attribute '%s' must be a label-valued type",
           name);
-      return setPropertyFlag(PropertyFlag.SINGLE_ARTIFACT, "single_artifact");
+      return setPropertyFlag(PropertyFlag.SINGLE_ARTIFACT);
     }
 
     /**
@@ -507,27 +515,27 @@ public final class Attribute implements Comparable<Attribute> {
     public Builder<TYPE> silentRuleClassFilter() {
       Preconditions.checkState(
           type.getLabelClass() == LabelClass.DEPENDENCY, "must be a label-valued type");
-      return setPropertyFlag(PropertyFlag.SILENT_RULECLASS_FILTER, "silent_ruleclass_filter");
+      return setPropertyFlag(PropertyFlag.SILENT_RULECLASS_FILTER);
     }
 
     /** Skip analysis time filetype check. Don't use it if avoidable. */
     public Builder<TYPE> skipAnalysisTimeFileTypeCheck() {
       Preconditions.checkState(
           type.getLabelClass() == LabelClass.DEPENDENCY, "must be a label-valued type");
-      return setPropertyFlag(
-          PropertyFlag.SKIP_ANALYSIS_TIME_FILETYPE_CHECK, "skip_analysis_time_filetype_check");
+      return setPropertyFlag(PropertyFlag.SKIP_ANALYSIS_TIME_FILETYPE_CHECK);
     }
 
     /** Mark the built attribute as order-independent. */
+    @CanIgnoreReturnValue
     public Builder<TYPE> orderIndependent() {
       Preconditions.checkNotNull(type.getListElementType(), "attribute '%s' must be a list", name);
-      return setPropertyFlag(PropertyFlag.ORDER_INDEPENDENT, "order-independent");
+      return setPropertyFlag(PropertyFlag.ORDER_INDEPENDENT);
     }
 
     /** Mark the built attribute as to use output_licenses for license checking. */
     public Builder<TYPE> useOutputLicenses() {
       Preconditions.checkState(BuildType.isLabelType(type), "must be a label type");
-      return setPropertyFlag(PropertyFlag.OUTPUT_LICENSES, "output_license");
+      return setPropertyFlag(PropertyFlag.OUTPUT_LICENSES);
     }
 
     /**
@@ -536,8 +544,7 @@ public final class Attribute implements Comparable<Attribute> {
      * #hasAnalysisTestTransition()}.
      */
     public Builder<TYPE> hasStarlarkDefinedTransition() {
-      return setPropertyFlag(
-          PropertyFlag.HAS_STARLARK_DEFINED_TRANSITION, "starlark-defined split transition");
+      return setPropertyFlag(PropertyFlag.HAS_STARLARK_DEFINED_TRANSITION);
     }
 
     /**
@@ -545,8 +552,7 @@ public final class Attribute implements Comparable<Attribute> {
      * Such a configuration transition may only be applied on rules with {@code analysis_test=true}.
      */
     public Builder<TYPE> hasAnalysisTestTransition() {
-      return setPropertyFlag(
-          PropertyFlag.HAS_ANALYSIS_TEST_TRANSITION, "analysis-test split transition");
+      return setPropertyFlag(PropertyFlag.HAS_ANALYSIS_TEST_TRANSITION);
     }
 
     /** Defines the configuration transition for this attribute. */
@@ -565,7 +571,7 @@ public final class Attribute implements Comparable<Attribute> {
      * Defaults to {@code false}.
      */
     public Builder<TYPE> exec() {
-      return setPropertyFlag(PropertyFlag.EXECUTABLE, "executable");
+      return setPropertyFlag(PropertyFlag.EXECUTABLE);
     }
 
     /**
@@ -573,7 +579,7 @@ public final class Attribute implements Comparable<Attribute> {
      * compile_one_dependency.
      */
     public Builder<TYPE> direct_compile_time_input() {
-      return setPropertyFlag(PropertyFlag.DIRECT_COMPILE_TIME_INPUT, "direct_compile_time_input");
+      return setPropertyFlag(PropertyFlag.DIRECT_COMPILE_TIME_INPUT);
     }
 
     /**
@@ -583,7 +589,7 @@ public final class Attribute implements Comparable<Attribute> {
      *     for documentation
      */
     public Builder<TYPE> undocumented(String reason) {
-      return setPropertyFlag(PropertyFlag.UNDOCUMENTED, "undocumented");
+      return setPropertyFlag(PropertyFlag.UNDOCUMENTED);
     }
 
     /**
@@ -674,6 +680,14 @@ public final class Attribute implements Comparable<Attribute> {
       return this;
     }
 
+    @CanIgnoreReturnValue
+    public Builder<TYPE> value(MaterializingDefault<?, ? extends TYPE> defaultValue) {
+      value = defaultValue;
+      valueSource = AttributeValueSource.MATERIALIZER;
+      valueSet = true;
+      return this;
+    }
+
     /**
      * See value(TYPE) above. This method is only meant for Starlark usage.
      *
@@ -700,6 +714,18 @@ public final class Attribute implements Comparable<Attribute> {
       return defaultValue(defaultValue, null, null);
     }
 
+    /**
+     * Force the default value to be {@code None}. This method is meant only for usage by symbolic
+     * macro machinery.
+     */
+    @CanIgnoreReturnValue
+    public Builder<TYPE> defaultValueNone() {
+      value = null;
+      valueSet = true;
+      valueSource = AttributeValueSource.DIRECT;
+      return this;
+    }
+
     /** Returns where the value of this attribute comes from. Useful only for Starlark. */
     public AttributeValueSource getValueSource() {
       return valueSource;
@@ -707,7 +733,7 @@ public final class Attribute implements Comparable<Attribute> {
 
     /** Switches on the capability of an attribute to be published to the rule's tag set. */
     public Builder<TYPE> taggable() {
-      return setPropertyFlag(PropertyFlag.TAGGABLE, "taggable");
+      return setPropertyFlag(PropertyFlag.TAGGABLE);
     }
 
     /**
@@ -715,8 +741,7 @@ public final class Attribute implements Comparable<Attribute> {
      * com.google.devtools.build.lib.analysis.RuleContext.PrerequisiteValidator}.
      */
     public Builder<TYPE> skipPrereqValidatorCheck() {
-      return setPropertyFlag(
-          PropertyFlag.SKIP_PREREQ_VALIDATOR_CHECKS, "skip_prereq_validator_checks");
+      return setPropertyFlag(PropertyFlag.SKIP_PREREQ_VALIDATOR_CHECKS);
     }
 
     /**
@@ -732,7 +757,7 @@ public final class Attribute implements Comparable<Attribute> {
       Verify.verify(
           !propertyFlags.contains(PropertyFlag.SKIP_CONSTRAINTS_OVERRIDE),
           "constraint checking is already overridden to be skipped");
-      return setPropertyFlag(PropertyFlag.CHECK_CONSTRAINTS_OVERRIDE, "check_constraints");
+      return setPropertyFlag(PropertyFlag.CHECK_CONSTRAINTS_OVERRIDE);
     }
 
     /**
@@ -746,7 +771,7 @@ public final class Attribute implements Comparable<Attribute> {
       Verify.verify(
           !propertyFlags.contains(PropertyFlag.CHECK_CONSTRAINTS_OVERRIDE),
           "constraint checking is already overridden to be checked");
-      return setPropertyFlag(PropertyFlag.SKIP_CONSTRAINTS_OVERRIDE, "dont_check_constraints");
+      return setPropertyFlag(PropertyFlag.SKIP_CONSTRAINTS_OVERRIDE);
     }
 
     /**
@@ -1033,26 +1058,25 @@ public final class Attribute implements Comparable<Attribute> {
      */
     public Builder<TYPE> nonconfigurable(String reason) {
       Preconditions.checkState(!reason.isEmpty());
-      return setPropertyFlag(PropertyFlag.NONCONFIGURABLE, "nonconfigurable");
+      return setPropertyFlag(PropertyFlag.NONCONFIGURABLE);
     }
 
     @CanIgnoreReturnValue
     public Builder<TYPE> configurableAttrWasUserSet() {
-      return setPropertyFlag(
-          PropertyFlag.CONFIGURABLE_ATTR_WAS_USER_SET, "configurable_attr_was_user_set");
+      return setPropertyFlag(PropertyFlag.CONFIGURABLE_ATTR_WAS_USER_SET);
     }
 
     public Builder<TYPE> tool(String reason) {
       Preconditions.checkState(
           type.getLabelClass() == LabelClass.DEPENDENCY, "must be a label-valued type");
       Preconditions.checkState(!reason.isEmpty());
-      return setPropertyFlag(PropertyFlag.IS_TOOL_DEPENDENCY, "is_tool_dependency");
+      return setPropertyFlag(PropertyFlag.IS_TOOL_DEPENDENCY);
     }
 
     /** Marks the built attribute as defined in Starlark. */
     @CanIgnoreReturnValue
     public Builder<TYPE> starlarkDefined() {
-      return setPropertyFlag(PropertyFlag.STARLARK_DEFINED, "starlark_defined");
+      return setPropertyFlag(PropertyFlag.STARLARK_DEFINED);
     }
 
     /** Returns an {@link ImmutableAttributeFactory} that can be invoked to create attributes. */
@@ -1249,6 +1273,9 @@ public final class Attribute implements Comparable<Attribute> {
    * <p>Implementations of this interface must be immutable.
    */
   public abstract static class ComputedDefault implements StarlarkValue {
+    private static final Interner<ImmutableList<String>> dependenciesInterner =
+        BlazeInterners.newWeakInterner();
+
     private final ImmutableList<String> dependencies;
 
     /**
@@ -1286,7 +1313,8 @@ public final class Attribute implements Comparable<Attribute> {
      */
     ComputedDefault(ImmutableList<String> dependencies) {
       // Order is important for #createDependencyAssignmentTuple.
-      this.dependencies = Ordering.natural().immutableSortedCopy(dependencies);
+      this.dependencies =
+          dependenciesInterner.intern(Ordering.natural().immutableSortedCopy(dependencies));
     }
 
     <T> List<T> getPossibleValues(Type<T> type, Rule rule) {
@@ -1379,10 +1407,6 @@ public final class Attribute implements Comparable<Attribute> {
         throws InterruptedException, CannotPrecomputeDefaultsException {
 
       final StarlarkComputedDefaultTemplate owner = StarlarkComputedDefaultTemplate.this;
-      final String msg =
-          String.format(
-              "Cannot compute default value of attribute '%s' in rule '%s': ",
-              attr.getPublicName(), rule.getLabel());
       final AtomicReference<EvalException> caughtEvalExceptionIfAny = new AtomicReference<>();
       ComputationStrategy<InterruptedException> strategy =
           new ComputationStrategy<>() {
@@ -1419,6 +1443,10 @@ public final class Attribute implements Comparable<Attribute> {
       } catch (AttributeNotFoundException
           | TooManyConfigurableAttributesException
           | EvalException ex) {
+        final String msg =
+            String.format(
+                "Cannot compute default value of attribute '%s' in rule '%s': ",
+                attr.getPublicName(), rule.getLabel());
         String error = msg + ex.getMessage();
         rule.reportError(error, eventHandler);
         throw new CannotPrecomputeDefaultsException(error);
@@ -1436,7 +1464,7 @@ public final class Attribute implements Comparable<Attribute> {
           if (!Starlark.isNullOrNone(value)) {
             // Some attribute values are not valid Starlark values:
             // visibility is an ImmutableList, for example.
-            attrValues.put(attr.getName(), Starlark.fromJava(value, /*mutability=*/ null));
+            attrValues.put(attr.getName(), Attribute.valueToStarlark(value));
           }
         }
       }
@@ -1448,11 +1476,26 @@ public final class Attribute implements Comparable<Attribute> {
       Structure attrs =
           StructProvider.STRUCT.create(
               attrValues, "No such regular (non computed) attribute '%s'.");
-      Object result = callback.call(eventHandler, attrs);
+      Object uncheckedResult = callback.call(eventHandler, attrs);
       try {
-        return type.cast((result == Starlark.NONE) ? type.getDefaultValue() : result);
+        Object result =
+            type.cast(
+                (uncheckedResult == Starlark.NONE) ? type.getDefaultValue() : uncheckedResult);
+        // type.cast() for lists just ensures the returned result is a list, so we also need to
+        // validate each element has the right subtype
+        if (type instanceof Type.ListType) {
+          for (Object elem : (List) result) {
+            try {
+              var unused = type.getListElementType().cast(elem);
+            } catch (ClassCastException ex) {
+              throw Starlark.errorf(
+                  "expected '%s', but got '%s'", type.getListElementType(), Starlark.type(elem));
+            }
+          }
+        }
+        return result;
       } catch (ClassCastException ex) {
-        throw Starlark.errorf("expected '%s', but got '%s'", type, Starlark.type(result));
+        throw Starlark.errorf("expected '%s', but got '%s'", type, Starlark.type(uncheckedResult));
       }
     }
 
@@ -1479,6 +1522,9 @@ public final class Attribute implements Comparable<Attribute> {
    */
   static final class StarlarkComputedDefault extends ComputedDefault {
 
+    private static final Interner<ImmutableList<Type<?>>> dependencyTypesInterner =
+        BlazeInterners.newWeakInterner();
+
     private final ImmutableList<Type<?>> dependencyTypes;
     private final Map<List<Object>, Object> lookupTable;
 
@@ -1496,7 +1542,8 @@ public final class Attribute implements Comparable<Attribute> {
         ImmutableList<Type<?>> dependencyTypes,
         Map<List<Object>, Object> lookupTable) {
       super(Preconditions.checkNotNull(dependencies));
-      this.dependencyTypes = Preconditions.checkNotNull(dependencyTypes);
+      this.dependencyTypes =
+          Preconditions.checkNotNull(dependencyTypesInterner.intern(dependencyTypes));
       this.lookupTable = Preconditions.checkNotNull(lookupTable);
     }
 
@@ -1544,12 +1591,7 @@ public final class Attribute implements Comparable<Attribute> {
     }
 
     @Override
-    public ValueT resolve(
-        Rule rule,
-        AttributeMap attributes,
-        @Nullable FragmentT input,
-        @Nullable Object ctx,
-        @Nullable EventHandler eventHandler) {
+    public ValueT resolve(Rule rule, AttributeMap attributes, @Nullable FragmentT input) {
       return resolver.resolve(rule, attributes, input);
     }
   }
@@ -1644,15 +1686,8 @@ public final class Attribute implements Comparable<Attribute> {
      * @param rule the rule being evaluated
      * @param attributes interface for retrieving the values of the rule's other attributes
      * @param input the configuration fragment to evaluate with
-     * @param ctx a context object that may be used to evaluate the attribute
-     * @param eventHandler an event handler where messages from the evaluation are reported
      */
-    public abstract ValueT resolve(
-        Rule rule,
-        AttributeMap attributes,
-        @Nullable FragmentT input,
-        @Nullable Object ctx,
-        @Nullable EventHandler eventHandler)
+    public abstract ValueT resolve(Rule rule, AttributeMap attributes, @Nullable FragmentT input)
         throws InterruptedException, EvalException;
   }
 
@@ -1792,6 +1827,9 @@ public final class Attribute implements Comparable<Attribute> {
 
   private final Set<PropertyFlag> propertyFlags;
 
+  // The default value, either as specified in the attribute definition, or else as given by
+  // Type.getDefaultValue (which may be null).
+  //
   // Exactly one of these conditions is true:
   // 1. defaultValue == null.
   // 2. defaultValue instanceof ComputedDefault &&
@@ -1863,8 +1901,10 @@ public final class Attribute implements Comparable<Attribute> {
             || type.getLabelClass() == LabelClass.NONDEP_REFERENCE,
         "Configuration transitions can only be specified for label or label list attributes");
     Preconditions.checkArgument(
-        isLateBound(name) == (defaultValue instanceof LateBoundDefault),
-        "late bound attributes require a default value that is late bound (and vice versa): %s",
+        isAnalysisDependent(name)
+            == (defaultValue instanceof LateBoundDefault
+                || defaultValue instanceof MaterializingDefault),
+        "analysis dependent attributes require a default value that is one (and vice versa): %s",
         name);
     this.name = name;
     this.doc = doc;
@@ -2158,9 +2198,11 @@ public final class Attribute implements Comparable<Attribute> {
   }
 
   /**
-   * Returns the default value of this attribute.
+   * Returns the default value of this attribute. If no default was given by the attribute schema,
+   * this is just the default of the type ({@link Type#getDefaultValue}).
    *
-   * <p>The result may be null (although this is not a value in the build language).
+   * <p>The result may be null, for instance when the schema does not specify any default value and
+   * the attribute is of LabelType. In Starlark, null is typically converted to None.
    *
    * <p>During population of the rule's attribute dictionary, all non-computed defaults must be set
    * before all computed ones.
@@ -2190,8 +2232,12 @@ public final class Attribute implements Comparable<Attribute> {
   }
 
   public LateBoundDefault<?, ?> getLateBoundDefault() {
-    Preconditions.checkState(isLateBound());
     return (LateBoundDefault<?, ?>) defaultValue;
+  }
+
+  public MaterializingDefault<?, ?> getMaterializer() {
+    Preconditions.checkState(isMaterializing());
+    return (MaterializingDefault<?, ?>) defaultValue;
   }
 
   /**
@@ -2229,20 +2275,24 @@ public final class Attribute implements Comparable<Attribute> {
    * late-bound attributes.
    */
   public boolean isLateBound() {
-    return isLateBound(name);
+    return defaultValue instanceof LateBoundDefault<?, ?>;
+  }
+
+  public boolean isMaterializing() {
+    return defaultValue instanceof MaterializingDefault<?, ?>;
   }
 
   /**
    * Returns if an attribute with the given name is late-bound according to the naming policy that
    * designates late-bound attributes.
    */
-  public static boolean isLateBound(String name) {
+  public static boolean isAnalysisDependent(String name) {
     return name.startsWith(":");
   }
 
   /** Returns whether this attribute is considered private in Starlark. */
   private static boolean isPrivateAttribute(String nativeAttrName) {
-    return isLateBound(nativeAttrName) || isImplicit(nativeAttrName);
+    return isAnalysisDependent(nativeAttrName) || isImplicit(nativeAttrName);
   }
 
   /**
@@ -2366,8 +2416,9 @@ public final class Attribute implements Comparable<Attribute> {
    * Starlark uses only immutable {@link net.starlark.java.eval.StarlarkList} and {@link Dict}.
    *
    * <p>The conversion is similar to {@link Starlark#fromJava} for all types except {@code
-   * attr.string_list_dict} ({@code Map<String, List<String>>}), for which fromJava does not
-   * recursively convert elements. (Doing so is expensive.)
+   * attr.string_list_dict} ({@code Map<String, List<String>>}) and {@link
+   * BuildType#LABEL_LIST_DICT}, for which fromJava does not recursively convert elements. (Doing so
+   * is expensive.)
    *
    * <p>It is tempting to require that attributes are stored internally in Starlark form. However, a
    * number of obstacles would need to be overcome:
@@ -2382,17 +2433,21 @@ public final class Attribute implements Comparable<Attribute> {
    * </ol>
    */
   public static Object valueToStarlark(Object x) {
-    // Is x a non-empty string_list_dict?
-    if (x instanceof Map) {
-      Map<?, ?> map = (Map<?, ?>) x;
+    if (x instanceof Map<?, ?> map) {
+      // Is x a non-empty {label,string}_list_dict?
       if (!map.isEmpty() && map.values().iterator().next() instanceof List) {
         // Recursively convert subelements.
         Dict.Builder<Object, Object> dict = Dict.builder();
-        for (Map.Entry<?, ?> e : map.entrySet()) {
-          dict.put(e.getKey(), Starlark.fromJava(e.getValue(), null));
-        }
+        map.forEach((key, value) -> dict.put(key, Starlark.fromJava(value, null)));
         return dict.buildImmutable();
       }
+    } else if (x instanceof Set<?> set) {
+      // Until Starlark gains a set data type, shallow-convert Java sets (e.g. DISTRIBUTION values)
+      // to Starlark lists.
+      return StarlarkList.immutableCopyOf(set);
+    } else if (x instanceof TriState triState) {
+      // Convert TriState to integer (same as in query output and native.existing_rules())
+      return Starlark.fromJava(triState.toInt(), /* mutability= */ null);
     }
 
     // For all other attribute values, shallow conversion is safe.

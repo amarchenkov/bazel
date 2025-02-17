@@ -15,6 +15,7 @@
 package com.google.devtools.build.lib.analysis.config;
 
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.base.Joiner;
 import com.google.common.collect.ImmutableCollection;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
@@ -26,6 +27,7 @@ import com.google.devtools.build.lib.actions.BuildConfigurationEvent;
 import com.google.devtools.build.lib.actions.CommandLineLimits;
 import com.google.devtools.build.lib.analysis.BlazeDirectories;
 import com.google.devtools.build.lib.analysis.PlatformOptions;
+import com.google.devtools.build.lib.analysis.test.TestConfiguration.TestOptions;
 import com.google.devtools.build.lib.buildeventstream.BuildEvent;
 import com.google.devtools.build.lib.buildeventstream.BuildEventIdUtil;
 import com.google.devtools.build.lib.buildeventstream.BuildEventStreamProtos;
@@ -34,6 +36,7 @@ import com.google.devtools.build.lib.buildeventstream.NullConfiguration;
 import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.cmdline.RepositoryName;
 import com.google.devtools.build.lib.concurrent.BlazeInterners;
+import com.google.devtools.build.lib.events.Event;
 import com.google.devtools.build.lib.events.EventHandler;
 import com.google.devtools.build.lib.packages.BuiltinRestriction;
 import com.google.devtools.build.lib.skyframe.config.BuildConfigurationKey;
@@ -138,6 +141,20 @@ public class BuildConfigurationValue
    * deprecated options, and warnings or errors for any option settings that conflict.
    */
   public void reportInvalidOptions(EventHandler reporter) {
+    // Validate that --cpu has an allowed value. Since there is no CoreConfiguration, handle this
+    // directly instead of using reportInvalidOptions.
+    // TODO: blaze-configurability-team - Remove this when --cpu is fully deprecated.
+    CoreOptions coreOptions = getOptions().get(CoreOptions.class);
+    if (!coreOptions.allowedCpuValues.isEmpty()) {
+      if (!coreOptions.allowedCpuValues.contains(coreOptions.cpu)) {
+        reporter.handle(
+            Event.error(
+                String.format(
+                    "Invalid --cpu value \"%s\": allowed values are %s.",
+                    coreOptions.cpu, Joiner.on(", ").join(coreOptions.allowedCpuValues))));
+      }
+    }
+
     for (Fragment fragment : fragments.values()) {
       fragment.reportInvalidOptions(reporter, this.buildOptions);
     }
@@ -149,9 +166,13 @@ public class BuildConfigurationValue
    * be inherited from the client environment.
    */
   private ActionEnvironment setupTestEnvironment() {
-    // We make a copy first to remove duplicate entries; last one wins.
+    if (!buildOptions.contains(TestOptions.class)) {
+      // TestOptions have been trimmed.
+      return ActionEnvironment.EMPTY;
+    }
+    // Order doesn't matter here as ActionEnvironment sorts by key.
     Map<String, String> testEnv = new HashMap<>();
-    for (Map.Entry<String, String> entry : options.testEnvironment) {
+    for (Map.Entry<String, String> entry : buildOptions.get(TestOptions.class).testEnvironment) {
       testEnv.put(entry.getKey(), entry.getValue());
     }
     return ActionEnvironment.split(testEnv);
@@ -455,16 +476,6 @@ public class BuildConfigurationValue
     return outputDirectories.getHostPathSeparator();
   }
 
-  /**
-   * Returns the internal directory (used for middlemen) for this build configuration.
-   *
-   * @deprecated Use {@code RuleContext#getMiddlemanDirectory} instead whenever possible.
-   */
-  @Deprecated
-  public ArtifactRoot getMiddlemanDirectory(RepositoryName repositoryName) {
-    return outputDirectories.getMiddlemanDirectory(repositoryName);
-  }
-
   public boolean isStrictFilesets() {
     return options.strictFilesets;
   }
@@ -589,11 +600,11 @@ public class BuildConfigurationValue
    * <p>Command-line definitions of make environments override variables defined by {@code
    * Fragment.addGlobalMakeVariables()}.
    */
-  public Map<String, String> getMakeEnvironment() {
-    Map<String, String> makeEnvironment = new HashMap<>();
+  public ImmutableMap<String, String> getMakeEnvironment() {
+    ImmutableMap.Builder<String, String> makeEnvironment = ImmutableMap.builder();
     makeEnvironment.putAll(globalMakeEnv);
     makeEnvironment.putAll(commandLineBuildVariables);
-    return ImmutableMap.copyOf(makeEnvironment);
+    return makeEnvironment.buildKeepingLast();
   }
 
   /**

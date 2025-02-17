@@ -17,13 +17,15 @@ filegroup(
 
 java_library(
     name = "commands",
-    srcs = glob([
-        "*.java",
-    ]),
+    srcs = glob(
+        ["*.java"],
+        exclude = ["PathToReplaceUtils.java"],
+    ),
     resources = glob(["*.txt"]) + [
         "//src/main/java/com/google/devtools/build/lib/runtime/commands/license",
     ],
     deps = [
+        ":paths_to_replace_utils",
         "//src/main/java/com/google/devtools/build/lib:build-request-options",
         "//src/main/java/com/google/devtools/build/lib:keep-going-option",
         "//src/main/java/com/google/devtools/build/lib:loading-phase-threads-option",
@@ -36,6 +38,7 @@ java_library(
         "//src/main/java/com/google/devtools/build/lib/actions:commandline_item",
         "//src/main/java/com/google/devtools/build/lib/analysis:analysis_cluster",
         "//src/main/java/com/google/devtools/build/lib/analysis:analysis_options",
+        "//src/main/java/com/google/devtools/build/lib/analysis:aspect_collection",
         "//src/main/java/com/google/devtools/build/lib/analysis:blaze_version_info",
         "//src/main/java/com/google/devtools/build/lib/analysis:config/build_configuration",
         "//src/main/java/com/google/devtools/build/lib/analysis:config/build_options",
@@ -52,7 +55,6 @@ java_library(
         "//src/main/java/com/google/devtools/build/lib/analysis:no_build_request_finished_event",
         "//src/main/java/com/google/devtools/build/lib/analysis:print_action_visitor",
         "//src/main/java/com/google/devtools/build/lib/analysis:run_environment_info",
-        "//src/main/java/com/google/devtools/build/lib/analysis:test/test_configuration",
         "//src/main/java/com/google/devtools/build/lib/analysis/config/output:configuration_for_output",
         "//src/main/java/com/google/devtools/build/lib/analysis/config/output:fragment_for_output",
         "//src/main/java/com/google/devtools/build/lib/analysis/config/output:fragment_options_for_output",
@@ -71,7 +73,6 @@ java_library(
         "//src/main/java/com/google/devtools/build/lib/packages/semantics",
         "//src/main/java/com/google/devtools/build/lib/pkgcache",
         "//src/main/java/com/google/devtools/build/lib/profiler",
-        "//src/main/java/com/google/devtools/build/lib/profiler:profiler-output",
         "//src/main/java/com/google/devtools/build/lib/profiler/memory:allocationtracker",
         "//src/main/java/com/google/devtools/build/lib/query2",
         "//src/main/java/com/google/devtools/build/lib/query2/common:abstract-blaze-query-env",
@@ -123,6 +124,17 @@ java_library(
         "//third_party:gson",
         "//third_party:guava",
         "//third_party:jsr305",
-        "//third_party/protobuf:protobuf_java",
+        "@com_google_protobuf//:protobuf_java",
+    ],
+)
+
+java_library(
+    name = "paths_to_replace_utils",
+    srcs = ["PathToReplaceUtils.java"],
+    deps = [
+        "//src/main/java/com/google/devtools/build/lib:runtime",
+        "//src/main/protobuf:command_server_java_proto",
+        "//third_party:guava",
+        "@com_google_protobuf//:protobuf_java",
     ],
 )

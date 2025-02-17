@@ -18,17 +18,19 @@ import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
 import static com.google.common.collect.ImmutableList.toImmutableList;
+import static java.util.Objects.requireNonNull;
 import static java.util.stream.Collectors.joining;
 
-import com.google.auto.value.AutoValue;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ConcurrentHashMultiset;
+import com.google.common.collect.HashMultimap;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
+import com.google.common.collect.SetMultimap;
 import com.google.common.flogger.GoogleLogger;
 import com.google.common.graph.EndpointPair;
 import com.google.common.graph.ImmutableGraph;
@@ -220,6 +222,11 @@ public final class ActionRewindStrategy {
     Set<DerivedArtifact> lostArtifacts =
         getLostInputOwningDirectDeps(failedKey, failedKeyDeps, lostInputs, inputDepOwners);
 
+    // Additional nested sets we may need to invalidate that are the dependencies of an
+    // insensitively propagating action, associated with the key that depends on them.
+    SetMultimap<SkyKey, ArtifactNestedSetKey> nestedSetsForPropagatingActions =
+        HashMultimap.create();
+
     for (DerivedArtifact lostArtifact : lostArtifacts) {
       Map<ActionLookupData, Action> actionMap = getActionsForLostArtifact(lostArtifact, env);
       if (actionMap == null) {
@@ -237,7 +244,23 @@ public final class ActionRewindStrategy {
       // always a transitive dep.
       rewindGraph.putEdge(failedKey, Artifact.key(lostArtifact));
       depsToRewind.addAll(actions(newlyVisitedActions));
-      checkActions(newlyVisitedActions, env, rewindGraph, depsToRewind);
+      checkActions(
+          newlyVisitedActions, env, rewindGraph, depsToRewind, nestedSetsForPropagatingActions);
+    }
+
+    // addNestedSetPathsToRewindGraph, called after this loop, stops its walk when it finds a node
+    // that is already in the rewind graph.
+    // However, because this rewinds all NestedSet chains from a given root, early termination later
+    // on won't matter because all dependent NestedSets are already in the graph.
+    // This may seem excessive, but it is not expected that many NestedSets are actually involved in
+    // this walk, and that this only happens rarely.
+    // TODO(b/395634488): This should be solved in a more elegant way, but a solution is needed to
+    // unblock the simplifications to Fileset (b/394611260)
+    for (SkyKey rootKey : nestedSetsForPropagatingActions.keySet()) {
+      for (ArtifactNestedSetKey nestedSetKey : nestedSetsForPropagatingActions.get(rootKey)) {
+        ArtifactNestedSetKey.addNestedSetChainsToRewindGraph(rewindGraph, nestedSetKey);
+        rewindGraph.putEdge(rootKey, nestedSetKey);
+      }
     }
 
     // This needs to be done after the loop above because addArtifactDepsAndGetNewlyVisitedActions
@@ -437,7 +460,7 @@ public final class ActionRewindStrategy {
 
           if (expandedDeps.contains(Artifact.key(transitiveOwner))) {
             // The lost input is included in an aggregation artifact (e.g. a tree artifact or
-            // fileset) that is included by an aggregation artifact (e.g. a middleman) that the
+            // fileset) that is included by an aggregation artifact (e.g. a runfiles tree) that the
             // action directly depends on.
             lostInputOwningDirectDeps.add((DerivedArtifact) transitiveOwner);
             foundLostInputDepOwner = true;
@@ -446,7 +469,7 @@ public final class ActionRewindStrategy {
 
         if (expandedDeps.contains(Artifact.key(owner))) {
           // The lost input is included in an aggregation artifact (e.g. a tree artifact, fileset,
-          // or middleman) that the action directly depends on.
+          // or runfiles tree) that the action directly depends on.
           lostInputOwningDirectDeps.add((DerivedArtifact) owner);
           foundLostInputDepOwner = true;
         }
@@ -488,7 +511,8 @@ public final class ActionRewindStrategy {
       ImmutableList<ActionAndLookupData> actionsToCheck,
       Environment env,
       MutableGraph<SkyKey> rewindGraph,
-      ImmutableList.Builder<Action> depsToRewind)
+      ImmutableList.Builder<Action> depsToRewind,
+      SetMultimap<SkyKey, ArtifactNestedSetKey> nestedSetDeps)
       throws InterruptedException {
     ArrayDeque<ActionAndLookupData> uncheckedActions = new ArrayDeque<>(actionsToCheck);
     while (!uncheckedActions.isEmpty()) {
@@ -514,7 +538,12 @@ public final class ActionRewindStrategy {
         // Rewinding this action won't recreate the missing input. We need to also rewind this
         // action's non-source inputs and the actions which created those inputs.
         addPropagatingActionDepsAndGetNewlyVisitedArtifactsAndActions(
-            rewindGraph, actionKey, action, artifactsToCheck, newlyDiscoveredActions);
+            rewindGraph,
+            actionKey,
+            action,
+            artifactsToCheck,
+            newlyDiscoveredActions,
+            nestedSetDeps);
       }
 
       for (ActionLookupData actionLookupData : newlyDiscoveredActions) {
@@ -579,7 +608,8 @@ public final class ActionRewindStrategy {
       ActionLookupData actionKey,
       Action action,
       ArrayList<DerivedArtifact> newlyVisitedArtifacts,
-      ArrayList<ActionLookupData> newlyVisitedActions) {
+      ArrayList<ActionLookupData> newlyVisitedActions,
+      SetMultimap<SkyKey, ArtifactNestedSetKey> nestedSetDeps) {
 
     for (Artifact input : action.getInputs().toList()) {
       if (input.isSourceArtifact()) {
@@ -601,6 +631,12 @@ public final class ActionRewindStrategy {
       }
       rewindGraph.putEdge(actionKey, artifactKey);
     }
+
+    // Record the action's NestedSet inputs as dependencies to be rewound.
+    action
+        .getInputs()
+        .getNonLeaves()
+        .forEach(nestedSet -> nestedSetDeps.put(actionKey, ArtifactNestedSetKey.create(nestedSet)));
 
     // Rewinding ignores artifacts returned by Action#getAllowedDerivedInputs because:
     // 1) the set of actions with non-throwing implementations of getAllowedDerivedInputs,
@@ -782,30 +818,26 @@ public final class ActionRewindStrategy {
    * A record indicating that {@link #failedKey} failed because it lost an input with the specified
    * digest.
    */
-  @AutoValue
-  abstract static class LostInputRecord {
-
-    abstract SkyKey failedKey();
-
-    abstract String lostInputDigest();
-
-    abstract String lostInputPath();
+  record LostInputRecord(SkyKey failedKey, String lostInputDigest, String lostInputPath) {
+    LostInputRecord {
+      requireNonNull(failedKey, "failedKey");
+      requireNonNull(lostInputDigest, "lostInputDigest");
+      requireNonNull(lostInputPath, "lostInputPath");
+    }
 
     static LostInputRecord create(SkyKey failedKey, String lostInputDigest, String lostInputPath) {
-      return new AutoValue_ActionRewindStrategy_LostInputRecord(
-          failedKey, lostInputDigest, lostInputPath);
+      return new LostInputRecord(failedKey, lostInputDigest, lostInputPath);
     }
   }
 
-  @AutoValue
-  abstract static class ActionAndLookupData {
-
-    abstract ActionLookupData lookupData();
-
-    abstract Action action();
+  record ActionAndLookupData(ActionLookupData lookupData, Action action) {
+    ActionAndLookupData {
+      requireNonNull(lookupData, "lookupData");
+      requireNonNull(action, "action");
+    }
 
     static ActionAndLookupData create(ActionLookupData lookupData, Action action) {
-      return new AutoValue_ActionRewindStrategy_ActionAndLookupData(lookupData, action);
+      return new ActionAndLookupData(lookupData, action);
     }
   }
 

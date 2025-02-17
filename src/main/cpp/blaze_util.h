@@ -19,14 +19,15 @@
 #ifndef BAZEL_SRC_MAIN_CPP_BLAZE_UTIL_H_
 #define BAZEL_SRC_MAIN_CPP_BLAZE_UTIL_H_
 
+#include <stdint.h>
 #include <sys/types.h>
 
 #include <map>
-#include <sstream>
 #include <string>
 #include <vector>
 
-#include "src/main/cpp/util/path.h"
+#include "src/main/cpp/util/logging.h"
+#include "src/main/cpp/util/path_platform.h"
 
 namespace blaze {
 
@@ -92,11 +93,19 @@ extern const unsigned int kPostKillGracePeriodSeconds;
 
 // Control the output of debug information by debug_log.
 // Revisit once client logging is fixed (b/32939567).
-void SetDebugLog(bool enabled);
+void SetDebugLog(blaze_util::LoggingDetail detail);
 
 // Returns true if this Bazel instance is running inside of a Bazel test.
 // This method observes the TEST_TMPDIR envvar.
 bool IsRunningWithinTest();
+
+// Gets the path to use for the file that Blaze's JVM creates to indicate it
+// observed an OOM.
+blaze_util::Path GetOOMFilePath(const blaze_util::Path& output_base);
+
+// Gets the path to use for the file that Blaze writes before it abruptly exits
+// and is unable to convey the exit code to use via the normal gRPC response.
+blaze_util::Path GetAbruptExitFilePath(const blaze_util::Path& output_base);
 
 // What WithEnvVar should do with an environment variable
 enum EnvVarAction { UNSET, SET };
@@ -128,6 +137,31 @@ class WithEnvVars {
  public:
   WithEnvVars(const std::map<std::string, EnvVarValue>& vars);
   ~WithEnvVars();
+};
+
+struct DurationMillis {
+ public:
+  uint64_t millis;
+
+  DurationMillis() : millis(0) {}
+
+  DurationMillis(const uint64_t start, const uint64_t end)
+      : millis(ComputeDuration(start, end)) {}
+
+  DurationMillis& operator+=(DurationMillis& other) {
+    millis += other.millis;
+    return *this;
+  }
+
+ private:
+  static uint64_t ComputeDuration(const uint64_t start, const uint64_t end) {
+    if (end < start) {
+      BAZEL_LOG(WARNING) << "Invalid duration: start=" << start
+                         << ", end=" << end;
+      return 0;
+    }
+    return end - start;
+  }
 };
 
 }  // namespace blaze

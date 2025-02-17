@@ -38,6 +38,7 @@ import com.google.devtools.build.lib.vfs.Path;
 import com.google.devtools.build.lib.vfs.PathFragment;
 import java.io.IOException;
 import java.io.InterruptedIOException;
+import java.net.SocketException;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.URL;
@@ -48,6 +49,7 @@ import java.util.Optional;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
+import java.util.concurrent.Phaser;
 import javax.annotation.Nullable;
 
 /**
@@ -123,9 +125,14 @@ public class DownloadManager {
       Path output,
       ExtendedEventHandler eventHandler,
       Map<String, String> clientEnv,
-      String context) {
+      String context,
+      Phaser downloadPhaser) {
     return executorService.submit(
         () -> {
+          if (downloadPhaser.register() != 0) {
+            // Not in download phase, must already have been cancelled.
+            throw new InterruptedException();
+          }
           try (SilentCloseable c = Profiler.instance().profile("fetching: " + context)) {
             return downloadInExecutor(
                 originalUrls,
@@ -138,6 +145,8 @@ public class DownloadManager {
                 eventHandler,
                 clientEnv,
                 context);
+          } finally {
+            downloadPhaser.arrive();
           }
         });
   }
@@ -349,17 +358,21 @@ public class DownloadManager {
       return false;
     }
 
-    if (e instanceof ContentLengthMismatchException) {
+    if (isRetryableException(e)) {
       return true;
     }
 
     for (var suppressed : e.getSuppressed()) {
-      if (suppressed instanceof ContentLengthMismatchException) {
+      if (isRetryableException(suppressed)) {
         return true;
       }
     }
 
     return false;
+  }
+
+  private boolean isRetryableException(Throwable e) {
+    return e instanceof ContentLengthMismatchException || e instanceof SocketException;
   }
 
   /**

@@ -17,7 +17,6 @@ package com.google.devtools.build.lib.rules.java;
 import static com.google.common.truth.Truth.assertThat;
 
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableSet;
 import com.google.devtools.build.lib.analysis.ConfiguredTarget;
 import com.google.devtools.build.lib.analysis.util.BuildViewTestCase;
 import com.google.devtools.build.lib.packages.StarlarkInfo;
@@ -53,6 +52,7 @@ public class JavaInfoRoundtripTest extends BuildViewTestCase {
     scratch.file(
         "javainfo/javainfo_to_dict.bzl",
         """
+        load("@rules_java//java/common:java_info.bzl", "JavaInfo")
         load("//tools/build_defs/inspect:struct_to_dict.bzl", "struct_to_dict")
         Info = provider()
         def _impl(ctx):
@@ -71,6 +71,7 @@ public class JavaInfoRoundtripTest extends BuildViewTestCase {
     scratch.file(
         "foo/construct_javainfo.bzl",
         """
+        load("@rules_java//java:defs.bzl", "JavaInfo")
         def _impl(ctx):
             OUTS = {
                 "lib": "lib%s.jar",
@@ -139,9 +140,7 @@ public class JavaInfoRoundtripTest extends BuildViewTestCase {
     StarlarkInfo dictInfo = getStarlarkProvider(dictTarget, "Info");
     @SuppressWarnings("unchecked") // deserialization
     Dict<Object, Object> javaInfo = (Dict<Object, Object>) dictInfo.getValue("result");
-    return deepStripAttributes(
-        javaInfo,
-        attr -> attr.startsWith("_") || ImmutableSet.of("to_proto", "to_json").contains(attr));
+    return deepStripAttributes(javaInfo, attr -> attr.startsWith("_"));
   }
 
   @SuppressWarnings("unchecked")
@@ -201,7 +200,10 @@ public class JavaInfoRoundtripTest extends BuildViewTestCase {
 
   @Test
   public void dictFromJavaInfo_nonEmpty() throws Exception {
-    scratch.overwriteFile("foo/BUILD", "java_library(name = 'java_lib', srcs = ['A.java'])");
+    scratch.overwriteFile(
+        "foo/BUILD",
+        "load('@rules_java//java:defs.bzl', 'java_library')",
+        "java_library(name = 'java_lib', srcs = ['A.java'])");
 
     Dict<Object, Object> javaInfo = getDictFromJavaInfo("foo", "java_lib");
 
@@ -211,10 +213,16 @@ public class JavaInfoRoundtripTest extends BuildViewTestCase {
   @Test
   public void dictFromJavaInfo_detectsDifference() throws Exception {
 
-    scratch.overwriteFile("foo/BUILD", "java_library(name = 'java_lib', srcs = ['A.java'])");
+    scratch.overwriteFile(
+        "foo/BUILD",
+        "load('@rules_java//java:defs.bzl', 'java_library')",
+        "java_library(name = 'java_lib', srcs = ['A.java'])");
     Dict<Object, Object> javaInfoA = getDictFromJavaInfo("foo", "java_lib");
 
-    scratch.overwriteFile("foo/BUILD", "java_library(name = 'java_lib2', srcs = ['A.java'])");
+    scratch.overwriteFile(
+        "foo/BUILD",
+        "load('@rules_java//java:defs.bzl', 'java_library')",
+        "java_library(name = 'java_lib2', srcs = ['A.java'])");
     Dict<Object, Object> javaInfoB = getDictFromJavaInfo("foo", "java_lib2");
 
     assertThat((Map<?, ?>) javaInfoA).isNotEqualTo(javaInfoB);
@@ -223,7 +231,10 @@ public class JavaInfoRoundtripTest extends BuildViewTestCase {
   @Test
   public void roundtripJavainfo_srcs() throws Exception {
 
-    scratch.overwriteFile("foo/BUILD", "java_library(name = 'java_lib', srcs = ['A.java'])");
+    scratch.overwriteFile(
+        "foo/BUILD",
+        "load('@rules_java//java:defs.bzl', 'java_library')",
+        "java_library(name = 'java_lib', srcs = ['A.java'])");
     Dict<Object, Object> javaInfoA = getDictFromJavaInfo("foo", "java_lib");
     scratch.overwriteFile(
         "foo/BUILD",
@@ -243,11 +254,15 @@ public class JavaInfoRoundtripTest extends BuildViewTestCase {
 
   @Test
   public void roundtripJavaInfo_deps() throws Exception {
-    scratch.file("bar/BUILD", "java_library(name = 'javalib', srcs = ['A.java'])");
+    scratch.file(
+        "bar/BUILD",
+        "load('@rules_java//java:defs.bzl', 'java_library')",
+        "java_library(name = 'javalib', srcs = ['A.java'])");
 
     scratch.overwriteFile(
         "foo/BUILD",
         """
+        load("@rules_java//java:defs.bzl", "java_library")
         java_library(
             name = "java_lib",
             srcs = ["A.java"],
@@ -274,11 +289,15 @@ public class JavaInfoRoundtripTest extends BuildViewTestCase {
 
   @Test
   public void roundtipJavaInfo_runtimeDeps() throws Exception {
-    scratch.file("bar/BUILD", "java_library(name = 'deplib', srcs = ['A.java'])");
+    scratch.file(
+        "bar/BUILD",
+        "load('@rules_java//java:defs.bzl', 'java_library')",
+        "java_library(name = 'deplib', srcs = ['A.java'])");
 
     scratch.overwriteFile(
         "foo/BUILD",
         """
+        load("@rules_java//java:defs.bzl", "java_library")
         java_library(
             name = "java_lib",
             srcs = ["A.java"],
@@ -305,11 +324,15 @@ public class JavaInfoRoundtripTest extends BuildViewTestCase {
 
   @Test
   public void roundtipJavaInfo_exports() throws Exception {
-    scratch.file("bar/BUILD", "java_library(name = 'exportlib', srcs = ['A.java'])");
+    scratch.file(
+        "bar/BUILD",
+        "load('@rules_java//java:defs.bzl', 'java_library')",
+        "java_library(name = 'exportlib', srcs = ['A.java'])");
 
     scratch.overwriteFile(
         "foo/BUILD",
         """
+        load("@rules_java//java:defs.bzl", "java_library")
         java_library(
             name = "java_lib",
             srcs = ["A.java"],
@@ -338,11 +361,13 @@ public class JavaInfoRoundtripTest extends BuildViewTestCase {
   public void roundtipJavaInfo_plugin() throws Exception {
     scratch.file(
         "bar/BUILD",
+        "load('@rules_java//java:defs.bzl', 'java_plugin')",
         "java_plugin(name = 'plugin', srcs = ['A.java'], processor_class = 'bar.Main')");
 
     scratch.overwriteFile(
         "foo/BUILD",
         """
+        load("@rules_java//java:defs.bzl", "java_library")
         java_library(
             name = "java_lib",
             srcs = ["A.java"],

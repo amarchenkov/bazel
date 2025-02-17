@@ -19,7 +19,6 @@ import static com.google.common.base.Preconditions.checkState;
 import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
-import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.devtools.build.lib.actions.FileValue;
@@ -32,6 +31,8 @@ import com.google.devtools.build.lib.cmdline.PackageIdentifier;
 import com.google.devtools.build.lib.cmdline.RepositoryMapping;
 import com.google.devtools.build.lib.cmdline.RepositoryName;
 import com.google.devtools.build.lib.events.Event;
+import com.google.devtools.build.lib.events.ExtendedEventHandler;
+import com.google.devtools.build.lib.events.StoredEventHandler;
 import com.google.devtools.build.lib.io.FileSymlinkException;
 import com.google.devtools.build.lib.io.InconsistentFilesystemException;
 import com.google.devtools.build.lib.packages.AutoloadSymbols;
@@ -54,13 +55,17 @@ import com.google.devtools.build.lib.profiler.Profiler;
 import com.google.devtools.build.lib.profiler.ProfilerTask;
 import com.google.devtools.build.lib.profiler.SilentCloseable;
 import com.google.devtools.build.lib.server.FailureDetails.FailureDetail;
+import com.google.devtools.build.lib.server.FailureDetails.Filesystem;
 import com.google.devtools.build.lib.server.FailureDetails.PackageLoading;
 import com.google.devtools.build.lib.server.FailureDetails.PackageLoading.Code;
+import com.google.devtools.build.lib.skyframe.IgnoredSubdirectoriesValue.InvalidIgnorePathException;
 import com.google.devtools.build.lib.skyframe.PackageFunctionWithMultipleGlobDeps.SkyframeGlobbingIOException;
 import com.google.devtools.build.lib.skyframe.RepoFileFunction.BadRepoFileException;
+import com.google.devtools.build.lib.skyframe.RepoPackageArgsFunction.RepoPackageArgsValue;
 import com.google.devtools.build.lib.skyframe.StarlarkBuiltinsFunction.BuiltinsFailedException;
 import com.google.devtools.build.lib.util.DetailedExitCode;
 import com.google.devtools.build.lib.util.Pair;
+import com.google.devtools.build.lib.vfs.DetailedIOException;
 import com.google.devtools.build.lib.vfs.FileSystemUtils;
 import com.google.devtools.build.lib.vfs.Path;
 import com.google.devtools.build.lib.vfs.PathFragment;
@@ -79,6 +84,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -112,6 +118,8 @@ public abstract class PackageFunction implements SkyFunction {
   @Nullable private BzlLoadFunction bzlLoadFunctionForInlining;
 
   private final ActionOnIOExceptionReadingBuildFile actionOnIOExceptionReadingBuildFile;
+
+  private final ActionOnFilesystemErrorCodeLoadingBzlFile actionOnFilesystemErrorCodeLoadingBzlFile;
 
   private final boolean shouldUseRepoDotBazel;
 
@@ -178,6 +186,7 @@ public abstract class PackageFunction implements SkyFunction {
       @Nullable BzlLoadFunction bzlLoadFunctionForInlining,
       @Nullable PackageProgressReceiver packageProgress,
       ActionOnIOExceptionReadingBuildFile actionOnIOExceptionReadingBuildFile,
+      ActionOnFilesystemErrorCodeLoadingBzlFile actionOnFilesystemErrorCodeLoadingBzlFile,
       boolean shouldUseRepoDotBazel,
       Function<SkyKey, ThreadStateReceiver> threadStateReceiverFactoryForMetrics,
       AtomicReference<Semaphore> cpuBoundSemaphore) {
@@ -188,6 +197,7 @@ public abstract class PackageFunction implements SkyFunction {
     this.numPackagesSuccessfullyLoaded = numPackagesSuccessfullyLoaded;
     this.packageProgress = packageProgress;
     this.actionOnIOExceptionReadingBuildFile = actionOnIOExceptionReadingBuildFile;
+    this.actionOnFilesystemErrorCodeLoadingBzlFile = actionOnFilesystemErrorCodeLoadingBzlFile;
     this.shouldUseRepoDotBazel = shouldUseRepoDotBazel;
     this.threadStateReceiverFactoryForMetrics = threadStateReceiverFactoryForMetrics;
     this.cpuBoundSemaphore = cpuBoundSemaphore;
@@ -235,6 +245,20 @@ public abstract class PackageFunction implements SkyFunction {
         return null;
       }
     }
+  }
+
+  /**
+   * What to do when encountering a {@link Filesystem} error code while trying to load a bzl file.
+   *
+   * <p>This class should decide whether the Filesystem error code takes precedence over the
+   * PackageLoading error code.
+   */
+  public interface ActionOnFilesystemErrorCodeLoadingBzlFile {
+    boolean shouldTakePrecedenceOverPackageLoadingCode(Filesystem.Code filesystemCode);
+
+    /** By default, always use the PackageLoading error code. */
+    public static ActionOnFilesystemErrorCodeLoadingBzlFile ALWAYS_USE_PACKAGE_LOADING_CODE =
+        filesystemCode -> false;
   }
 
   /** Ways that {@link PackageFunction} can perform globbing. */
@@ -409,8 +433,21 @@ public abstract class PackageFunction implements SkyFunction {
           (PackageLookupValue)
               env.getValueOrThrow(
                   packageLookupKey,
+                  BadRepoFileException.class,
+                  InvalidIgnorePathException.class,
                   BuildFileNotFoundException.class,
                   InconsistentFilesystemException.class);
+    } catch (InvalidIgnorePathException e) {
+      throw PackageFunctionException.builder()
+          .setType(PackageFunctionException.Type.NO_SUCH_PACKAGE)
+          .setTransience(Transience.PERSISTENT)
+          .setPackageIdentifier(packageId)
+          .setMessage(e.getMessage())
+          .setException(e)
+          .setPackageLoadingCode(PackageLoading.Code.BAD_IGNORED_DIRECTORIES)
+          .build();
+    } catch (BadRepoFileException e) {
+      throw badRepoFileException(e, packageId);
     } catch (BuildFileNotFoundException e) {
       throw new PackageFunctionException(e, Transience.PERSISTENT);
     } catch (InconsistentFilesystemException e) {
@@ -462,7 +499,7 @@ public abstract class PackageFunction implements SkyFunction {
     StarlarkBuiltinsValue starlarkBuiltinsValue;
     try {
       // Bazel: we do autoloads for all BUILD files if enabled
-      AutoloadSymbols autoloadSymbols = PrecomputedValue.AUTOLOAD_SYMBOLS.get(env);
+      AutoloadSymbols autoloadSymbols = AutoloadSymbols.AUTOLOAD_SYMBOLS.get(env);
       if (autoloadSymbols == null) {
         return null;
       }
@@ -534,12 +571,13 @@ public abstract class PackageFunction implements SkyFunction {
       // NoSuchPackageException. If that happens, we prefer throwing an exception derived from
       // Skyframe globbing. See the comments in #handleGlobDepsAndPropagateFilesystemExceptions.
       // Therefore we store the exception encountered here and maybe use it later.
-      pfeFromNonSkyframeGlobbing =
-          new PackageFunctionException(
-              e,
-              e.getCause() instanceof SkyframeGlobbingIOException
-                  ? Transience.PERSISTENT
-                  : Transience.TRANSIENT);
+      Transience transience =
+          switch (e.getCause()) {
+            case DetailedIOException detailed -> detailed.getTransience();
+            case SkyframeGlobbingIOException skyframeGlobbing -> Transience.PERSISTENT;
+            case null, default -> Transience.TRANSIENT;
+          };
+      pfeFromNonSkyframeGlobbing = new PackageFunctionException(e, transience);
     } catch (InternalInconsistentFilesystemException e) {
       throw e.throwPackageFunctionException();
     }
@@ -660,7 +698,8 @@ public abstract class PackageFunction implements SkyFunction {
       List<BzlLoadValue.Key> keys,
       StarlarkSemantics semantics,
       @Nullable BzlLoadFunction bzlLoadFunctionForInlining,
-      boolean checkVisibility)
+      boolean checkVisibility,
+      ActionOnFilesystemErrorCodeLoadingBzlFile actionOnFilesystemErrorCodeLoadingBzlFile)
       throws NoSuchPackageException, InterruptedException {
     List<BzlLoadValue> bzlLoads;
     try {
@@ -686,13 +725,23 @@ public abstract class PackageFunction implements SkyFunction {
       }
     } catch (BzlLoadFailedException e) {
       Throwable rootCause = Throwables.getRootCause(e);
-      throw PackageFunctionException.builder()
-          .setType(PackageFunctionException.Type.BUILD_FILE_CONTAINS_ERRORS)
-          .setPackageIdentifier(packageId)
-          .setException(rootCause instanceof IOException ? (IOException) rootCause : null)
-          .setMessage(e.getMessage())
-          .setPackageLoadingCode(PackageLoading.Code.IMPORT_STARLARK_FILE_ERROR)
-          .buildCause();
+      PackageFunctionException.Builder exceptionBuilder =
+          PackageFunctionException.builder()
+              .setType(PackageFunctionException.Type.BUILD_FILE_CONTAINS_ERRORS)
+              .setPackageIdentifier(packageId)
+              .setException(rootCause instanceof IOException ? (IOException) rootCause : null)
+              .setMessage(e.getMessage());
+
+      Filesystem.Code filesystemCode =
+          e.getDetailedExitCode().getFailureDetail().getFilesystem().getCode();
+      if (actionOnFilesystemErrorCodeLoadingBzlFile.shouldTakePrecedenceOverPackageLoadingCode(
+          filesystemCode)) {
+        exceptionBuilder.setFilesystemCode(filesystemCode);
+      } else {
+        exceptionBuilder.setPackageLoadingCode(PackageLoading.Code.IMPORT_STARLARK_FILE_ERROR);
+      }
+      exceptionBuilder.setTransience(e.getTransience());
+      throw exceptionBuilder.buildCause();
     }
 
     // Build map of loaded modules.
@@ -909,6 +958,18 @@ public abstract class PackageFunction implements SkyFunction {
     }
   }
 
+  private static PackageFunctionException badRepoFileException(
+      Exception cause, PackageIdentifier packageId) {
+    return PackageFunctionException.builder()
+        .setType(PackageFunctionException.Type.BUILD_FILE_CONTAINS_ERRORS)
+        .setPackageIdentifier(packageId)
+        .setTransience(Transience.PERSISTENT)
+        .setException(cause)
+        .setMessage("bad REPO.bazel file")
+        .setPackageLoadingCode(PackageLoading.Code.BAD_REPO_FILE)
+        .build();
+  }
+
   @ForOverride
   protected abstract Globber makeGlobber(
       NonSkyframeGlobber nonSkyframeGlobber,
@@ -944,39 +1005,32 @@ public abstract class PackageFunction implements SkyFunction {
     RuleVisibility defaultVisibility = PrecomputedValue.DEFAULT_VISIBILITY.get(env);
     ConfigSettingVisibilityPolicy configSettingVisibilityPolicy =
         PrecomputedValue.CONFIG_SETTING_VISIBILITY_POLICY.get(env);
-    IgnoredPackagePrefixesValue repositoryIgnoredPackagePrefixes =
-        (IgnoredPackagePrefixesValue)
-            env.getValue(IgnoredPackagePrefixesValue.key(packageId.getRepository()));
-    RepoFileValue repoFileValue;
+    IgnoredSubdirectoriesValue repositoryIgnoredSubdirectories =
+        (IgnoredSubdirectoriesValue)
+            env.getValue(IgnoredSubdirectoriesValue.key(packageId.getRepository()));
+    RepoPackageArgsValue repoPackageArgsValue;
     if (shouldUseRepoDotBazel) {
       try {
-        repoFileValue =
-            (RepoFileValue)
+        repoPackageArgsValue =
+            (RepoPackageArgsValue)
                 env.getValueOrThrow(
-                    RepoFileValue.key(packageId.getRepository()),
+                    RepoPackageArgsFunction.key(packageId.getRepository()),
                     IOException.class,
                     BadRepoFileException.class);
       } catch (IOException | BadRepoFileException e) {
-        throw PackageFunctionException.builder()
-            .setType(PackageFunctionException.Type.BUILD_FILE_CONTAINS_ERRORS)
-            .setPackageIdentifier(packageId)
-            .setTransience(Transience.PERSISTENT)
-            .setException(e)
-            .setMessage("bad REPO.bazel file")
-            .setPackageLoadingCode(PackageLoading.Code.BAD_REPO_FILE)
-            .build();
+        throw badRepoFileException(e, packageId);
       }
     } else {
-      repoFileValue = RepoFileValue.EMPTY;
+      repoPackageArgsValue = RepoPackageArgsValue.EMPTY;
     }
+
     if (env.valuesMissing()) {
       return null;
     }
+
     String workspaceName = workspaceNameValue.getName();
-    RepositoryMapping repositoryMapping = repositoryMappingValue.getRepositoryMapping();
-    RepositoryMapping mainRepositoryMapping = mainRepositoryMappingValue.getRepositoryMapping();
-    ImmutableSet<PathFragment> repositoryIgnoredPatterns =
-        repositoryIgnoredPackagePrefixes.getPatterns();
+    RepositoryMapping repositoryMapping = repositoryMappingValue.repositoryMapping();
+    RepositoryMapping mainRepositoryMapping = mainRepositoryMappingValue.repositoryMapping();
     Label preludeLabel = null;
 
     // Load (optional) prelude, which determines environment.
@@ -1028,7 +1082,8 @@ public abstract class PackageFunction implements SkyFunction {
                 buildFileRootedPath,
                 buildFileValue,
                 starlarkBuiltinsValue,
-                preludeBindings);
+                preludeBindings,
+                env.getListener());
         state.compiledBuildFile = compiled;
       }
 
@@ -1083,7 +1138,8 @@ public abstract class PackageFunction implements SkyFunction {
                   keys.build(),
                   starlarkBuiltinsValue.starlarkSemantics,
                   bzlLoadFunctionForInlining,
-                  /* checkVisibility= */ true);
+                  /* checkVisibility= */ true,
+                  actionOnFilesystemErrorCodeLoadingBzlFile);
         } catch (NoSuchPackageException e) {
           throw new PackageFunctionException(e, Transience.PERSISTENT);
         }
@@ -1104,7 +1160,7 @@ public abstract class PackageFunction implements SkyFunction {
               packageFactory.createNonSkyframeGlobber(
                   buildFileRootedPath.asPath().getParentDirectory(),
                   packageId,
-                  repositoryIgnoredPatterns,
+                  repositoryIgnoredSubdirectories.asIgnoredSubdirectories(),
                   packageLocator,
                   threadStateReceiverFactoryForMetrics.apply(keyForMetrics)),
               packageId,
@@ -1118,8 +1174,8 @@ public abstract class PackageFunction implements SkyFunction {
               packageId,
               buildFileRootedPath,
               workspaceName,
-              repositoryMappingValue.getAssociatedModuleName(),
-              repositoryMappingValue.getAssociatedModuleVersion(),
+              repositoryMappingValue.associatedModuleName(),
+              repositoryMappingValue.associatedModuleVersion(),
               starlarkBuiltinsValue.starlarkSemantics,
               repositoryMapping,
               mainRepositoryMapping,
@@ -1128,9 +1184,9 @@ public abstract class PackageFunction implements SkyFunction {
               configSettingVisibilityPolicy,
               globber);
 
-      pkgBuilder
-          .mergePackageArgsFrom(PackageArgs.builder().setDefaultVisibility(defaultVisibility))
-          .mergePackageArgsFrom(repoFileValue.packageArgs());
+      pkgBuilder.mergePackageArgsFrom(
+          PackageArgs.builder().setDefaultVisibility(defaultVisibility));
+      pkgBuilder.mergePackageArgsFrom(repoPackageArgsValue.getPackageArgs());
 
       if (compiled.ok()) {
         packageFactory.executeBuildFile(
@@ -1180,7 +1236,8 @@ public abstract class PackageFunction implements SkyFunction {
       RootedPath buildFilePath,
       FileValue buildFileValue,
       StarlarkBuiltinsValue starlarkBuiltinsValue,
-      @Nullable Map<String, Object> preludeBindings)
+      @Nullable Map<String, Object> preludeBindings,
+      ExtendedEventHandler reporter)
       throws PackageFunctionException {
     // Though it could be in principle, `cpuBoundSemaphore` is not held here as this method does
     // not show up in profiles as being significantly impacted by thrashing. It could be worth doing
@@ -1214,7 +1271,27 @@ public abstract class PackageFunction implements SkyFunction {
       // If control flow reaches here, we're in territory that is deliberately unsound.
       // See the javadoc for ActionOnIOExceptionReadingBuildFile.
     }
-    ParserInput input = ParserInput.fromLatin1(buildFileBytes, inputFile.toString());
+    StoredEventHandler handler = new StoredEventHandler();
+    ParserInput input;
+    try {
+      input =
+          StarlarkUtil.createParserInput(
+              buildFileBytes,
+              inputFile.toString(),
+              semantics.get(BuildLanguageOptions.INCOMPATIBLE_ENFORCE_STARLARK_UTF8),
+              handler);
+    } catch (StarlarkUtil.InvalidUtf8Exception e) {
+      handler.replayOn(reporter);
+      throw PackageFunctionException.builder()
+          .setType(PackageFunctionException.Type.BUILD_FILE_CONTAINS_ERRORS)
+          .setPackageIdentifier(packageId)
+          .setTransience(Transience.PERSISTENT)
+          .setException(e)
+          .setMessage("error reading " + inputFile.toString())
+          .setPackageLoadingCode(PackageLoading.Code.STARLARK_EVAL_ERROR)
+          .build();
+    }
+    handler.replayOn(reporter);
 
     // Options for processing BUILD files.
     FileOptions options =
@@ -1262,7 +1339,7 @@ public abstract class PackageFunction implements SkyFunction {
                 .getUninjectedBuildEnv()
             : starlarkBuiltinsValue.predeclaredForBuild;
     if (preludeBindings != null) {
-      predeclared = new HashMap<>(predeclared);
+      predeclared = new LinkedHashMap<>(predeclared);
       predeclared.putAll(preludeBindings);
     }
     Module module = Module.withPredeclared(semantics, predeclared);
@@ -1299,6 +1376,8 @@ public abstract class PackageFunction implements SkyFunction {
     @Nullable private PackageProgressReceiver packageProgress;
     private ActionOnIOExceptionReadingBuildFile actionOnIOExceptionReadingBuildFile =
         PackageFunction.ActionOnIOExceptionReadingBuildFile.UseOriginalIOException.INSTANCE;
+    private ActionOnFilesystemErrorCodeLoadingBzlFile actionOnFilesystemErrorCodeLoadingBzlFile =
+        PackageFunction.ActionOnFilesystemErrorCodeLoadingBzlFile.ALWAYS_USE_PACKAGE_LOADING_CODE;
     private boolean shouldUseRepoDotBazel = true;
     private GlobbingStrategy globbingStrategy = GlobbingStrategy.SINGLE_GLOBS_HYBRID;
     private Function<SkyKey, ThreadStateReceiver> threadStateReceiverFactoryForMetrics =
@@ -1349,6 +1428,13 @@ public abstract class PackageFunction implements SkyFunction {
     }
 
     @CanIgnoreReturnValue
+    public Builder setActionOnFilesystemErrorCodeLoadingBzlFile(
+        ActionOnFilesystemErrorCodeLoadingBzlFile actionOnFilesystemErrorCodeLoadingBzlFile) {
+      this.actionOnFilesystemErrorCodeLoadingBzlFile = actionOnFilesystemErrorCodeLoadingBzlFile;
+      return this;
+    }
+
+    @CanIgnoreReturnValue
     public Builder setShouldUseRepoDotBazel(boolean shouldUseRepoDotBazel) {
       this.shouldUseRepoDotBazel = shouldUseRepoDotBazel;
       return this;
@@ -1384,6 +1470,7 @@ public abstract class PackageFunction implements SkyFunction {
               bzlLoadFunctionForInlining,
               packageProgress,
               actionOnIOExceptionReadingBuildFile,
+              actionOnFilesystemErrorCodeLoadingBzlFile,
               shouldUseRepoDotBazel,
               threadStateReceiverFactoryForMetrics,
               cpuBoundSemaphore);
@@ -1397,6 +1484,7 @@ public abstract class PackageFunction implements SkyFunction {
               bzlLoadFunctionForInlining,
               packageProgress,
               actionOnIOExceptionReadingBuildFile,
+              actionOnFilesystemErrorCodeLoadingBzlFile,
               shouldUseRepoDotBazel,
               threadStateReceiverFactoryForMetrics,
               cpuBoundSemaphore);
@@ -1410,6 +1498,7 @@ public abstract class PackageFunction implements SkyFunction {
               bzlLoadFunctionForInlining,
               packageProgress,
               actionOnIOExceptionReadingBuildFile,
+              actionOnFilesystemErrorCodeLoadingBzlFile,
               shouldUseRepoDotBazel,
               threadStateReceiverFactoryForMetrics,
               cpuBoundSemaphore);
@@ -1474,6 +1563,10 @@ public abstract class PackageFunction implements SkyFunction {
       super(e, transience);
     }
 
+    public PackageFunctionException(BadRepoFileException e, Transience transience) {
+      super(e, transience);
+    }
+
     static Builder builder() {
       return new Builder();
     }
@@ -1532,6 +1625,7 @@ public abstract class PackageFunction implements SkyFunction {
       private Exception exception;
       private String message;
       private PackageLoading.Code packageLoadingCode;
+      private Filesystem.Code filesystemCode;
 
       @CanIgnoreReturnValue
       Builder setType(Type exceptionType) {
@@ -1569,6 +1663,12 @@ public abstract class PackageFunction implements SkyFunction {
         return this;
       }
 
+      @CanIgnoreReturnValue
+      Builder setFilesystemCode(Filesystem.Code filesystemCode) {
+        this.filesystemCode = filesystemCode;
+        return this;
+      }
+
       @Override
       public int hashCode() {
         return Objects.hash(
@@ -1593,8 +1693,18 @@ public abstract class PackageFunction implements SkyFunction {
 
       NoSuchPackageException buildCause() {
         checkNotNull(exceptionType, "The NoSuchPackageException type must be set.");
-        checkNotNull(packageLoadingCode, "The PackageLoading code must be set.");
-        DetailedExitCode detailedExitCode = createDetailedExitCode(message, packageLoadingCode);
+
+        DetailedExitCode detailedExitCode;
+        if (filesystemCode != null) {
+          detailedExitCode = createDetailedExitCodeWithFilesystemCode(message, filesystemCode);
+        } else {
+          checkNotNull(
+              packageLoadingCode,
+              "Either the Filesystem code or the PackageLoading code must be set.");
+          detailedExitCode =
+              createDetailedExitCodeWithPackageLoadingCode(message, packageLoadingCode);
+        }
+
         return exceptionType.create(packageIdentifier, message, detailedExitCode, exception);
       }
 
@@ -1603,12 +1713,21 @@ public abstract class PackageFunction implements SkyFunction {
             buildCause(), checkNotNull(transience, "Transience must be set"));
       }
 
-      private static DetailedExitCode createDetailedExitCode(
+      private static DetailedExitCode createDetailedExitCodeWithPackageLoadingCode(
           String message, PackageLoading.Code packageLoadingCode) {
         return DetailedExitCode.of(
             FailureDetail.newBuilder()
                 .setMessage(message)
                 .setPackageLoading(PackageLoading.newBuilder().setCode(packageLoadingCode).build())
+                .build());
+      }
+
+      private static DetailedExitCode createDetailedExitCodeWithFilesystemCode(
+          String message, Filesystem.Code filesystemCode) {
+        return DetailedExitCode.of(
+            FailureDetail.newBuilder()
+                .setMessage(message)
+                .setFilesystem(Filesystem.newBuilder().setCode(filesystemCode))
                 .build());
       }
     }

@@ -59,6 +59,7 @@ import com.google.devtools.build.lib.runtime.ClientOptions;
 import com.google.devtools.build.lib.runtime.Command;
 import com.google.devtools.build.lib.runtime.CommandEnvironment;
 import com.google.devtools.build.lib.runtime.CommonCommandOptions;
+import com.google.devtools.build.lib.runtime.ConfigFlagDefinitions;
 import com.google.devtools.build.lib.runtime.KeepGoingOption;
 import com.google.devtools.build.lib.runtime.LoadingPhaseThreadsOption;
 import com.google.devtools.build.lib.runtime.UiOptions;
@@ -204,7 +205,8 @@ public class BlazeRuntimeWrapper {
                 extensions.stream().map(Any::pack).collect(toImmutableList()),
                 this.crashMessages::add,
                 NO_OP_COMMAND_EXTENSION_REPORTER,
-                /* attemptNumber= */ 1);
+                /* attemptNumber= */ 1,
+                ConfigFlagDefinitions.NONE);
     return env;
   }
 
@@ -310,7 +312,10 @@ public class BlazeRuntimeWrapper {
       Iterables.addAll(options, module.getCommandOptions(commandAnnotation));
     }
     options.addAll(runtime.getRuleClassProvider().getFragmentRegistry().getOptionsClasses());
-    return OptionsParser.builder().optionsClasses(options).build();
+    // Because the tests that use this class don't set sources for their options, the normal logic
+    // for determining user options assumes that all options are user options. This causes tests
+    // that enable PROJECT.scl files to fail, so ignore user options instead.
+    return OptionsParser.builder().optionsClasses(options).ignoreUserOptions().build();
   }
 
   void executeNonBuildCommand() throws Exception {
@@ -375,7 +380,7 @@ public class BlazeRuntimeWrapper {
           try (SilentCloseable c = Profiler.instance().profile("syncPackageLoading")) {
             env.syncPackageLoading(lastRequest);
           }
-          buildTool.buildTargets(lastRequest, lastResult, null);
+          buildTool.buildTargets(lastRequest, lastResult, null, optionsParser);
           detailedExitCode = DetailedExitCode.success();
         } catch (RuntimeException | Error e) {
           crash = Crash.from(e);

@@ -18,6 +18,7 @@ import static com.google.common.collect.ImmutableList.toImmutableList;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
 import com.google.devtools.build.lib.actions.ActionInput;
 import com.google.devtools.build.lib.actions.ActionInputHelper;
 import com.google.devtools.build.lib.actions.Artifact;
@@ -26,10 +27,9 @@ import com.google.devtools.build.lib.actions.Artifact.SpecialArtifact;
 import com.google.devtools.build.lib.actions.Artifact.TreeFileArtifact;
 import com.google.devtools.build.lib.actions.ArtifactExpander;
 import com.google.devtools.build.lib.actions.ArtifactExpander.MissingExpansionException;
-import com.google.devtools.build.lib.actions.FilesetManifest;
-import com.google.devtools.build.lib.actions.FilesetManifest.ForbiddenRelativeSymlinkException;
-import com.google.devtools.build.lib.actions.FilesetManifest.RelativeSymlinkBehavior;
-import com.google.devtools.build.lib.actions.FilesetOutputSymlink;
+import com.google.devtools.build.lib.actions.FilesetOutputTree;
+import com.google.devtools.build.lib.actions.FilesetOutputTree.ForbiddenRelativeSymlinkException;
+import com.google.devtools.build.lib.actions.FilesetOutputTree.RelativeSymlinkBehavior;
 import com.google.devtools.build.lib.actions.ForbiddenActionInputException;
 import com.google.devtools.build.lib.actions.InputMetadataProvider;
 import com.google.devtools.build.lib.actions.PathMapper;
@@ -85,7 +85,7 @@ public final class SpawnInputExpander {
   }
 
   @VisibleForTesting
-  void addSingleRunfilesTreeToInputs(
+  public void addSingleRunfilesTreeToInputs(
       RunfilesTree runfilesTree,
       Map<PathFragment, ActionInput> inputMap,
       ArtifactExpander artifactExpander,
@@ -127,7 +127,7 @@ public final class SpawnInputExpander {
             baseDirectory);
         continue;
       }
-      Preconditions.checkArgument(!artifact.isMiddlemanArtifact(), artifact);
+      Preconditions.checkArgument(!artifact.isRunfilesTree(), artifact);
       if (artifact.isTreeArtifact()) {
         ArchivedTreeArtifact archivedTreeArtifact =
             expandArchivedTreeArtifacts ? null : artifactExpander.getArchivedTreeArtifact(artifact);
@@ -140,7 +140,7 @@ public final class SpawnInputExpander {
                   NestedSetBuilder.create(Order.STABLE_ORDER, artifact),
                   artifactExpander,
                   /* keepEmptyTreeArtifacts= */ false,
-                  /* keepMiddlemanArtifacts= */ false);
+                  /* keepRunfilesTreeArtifacts= */ false);
           for (ActionInput input : expandedInputs) {
             addMapping(
                 inputMap,
@@ -151,14 +151,14 @@ public final class SpawnInputExpander {
           }
         }
       } else if (artifact.isFileset()) {
-        ImmutableList<FilesetOutputSymlink> filesetLinks;
+        FilesetOutputTree filesetOutput;
         try {
-          filesetLinks = artifactExpander.expandFileset(artifact);
+          filesetOutput = artifactExpander.expandFileset(artifact);
         } catch (MissingExpansionException e) {
           throw new IllegalStateException(e);
         }
         // TODO(bazel-team): Add path mapping support for filesets.
-        addFilesetManifest(location, artifact, filesetLinks, inputMap, baseDirectory);
+        addFilesetManifest(location, artifact, filesetOutput, inputMap, baseDirectory);
       } else {
         // TODO: b/7075837 - If we want to prohibit directory inputs, we can check if
         //  localArtifact is a directory and, if so, throw a ForbiddenActionInputException.
@@ -169,12 +169,11 @@ public final class SpawnInputExpander {
 
   @VisibleForTesting
   void addFilesetManifests(
-      Map<Artifact, ImmutableList<FilesetOutputSymlink>> filesetMappings,
+      Map<Artifact, FilesetOutputTree> filesetMappings,
       Map<PathFragment, ActionInput> inputMap,
       PathFragment baseDirectory)
       throws ForbiddenRelativeSymlinkException {
-    for (Map.Entry<Artifact, ImmutableList<FilesetOutputSymlink>> entry :
-        filesetMappings.entrySet()) {
+    for (Map.Entry<Artifact, FilesetOutputTree> entry : filesetMappings.entrySet()) {
       Artifact fileset = entry.getKey();
       addFilesetManifest(fileset.getExecPath(), fileset, entry.getValue(), inputMap, baseDirectory);
     }
@@ -183,23 +182,19 @@ public final class SpawnInputExpander {
   private void addFilesetManifest(
       PathFragment location,
       Artifact filesetArtifact,
-      ImmutableList<FilesetOutputSymlink> filesetLinks,
+      FilesetOutputTree filesetOutput,
       Map<PathFragment, ActionInput> inputMap,
       PathFragment baseDirectory)
       throws ForbiddenRelativeSymlinkException {
     Preconditions.checkArgument(filesetArtifact.isFileset(), filesetArtifact);
-    FilesetManifest filesetManifest =
-        FilesetManifest.constructFilesetManifest(filesetLinks, location, relSymlinkBehavior);
-
-    for (Map.Entry<PathFragment, String> mapping : filesetManifest.getEntries().entrySet()) {
-      String value = mapping.getValue();
-      ActionInput artifact =
-          value == null
-              ? VirtualActionInput.EMPTY_MARKER
-              : ActionInputHelper.fromPath(execRoot.getRelative(value).asFragment());
-      // TODO(bazel-team): Add path mapping support for filesets.
-      addMapping(inputMap, mapping.getKey(), artifact, baseDirectory);
-    }
+    filesetOutput.visitSymlinks(
+        relSymlinkBehavior,
+        (name, target, metadata) ->
+            addMapping(
+                inputMap,
+                location.getRelative(name),
+                ActionInputHelper.fromPath(execRoot.getRelative(target).asFragment()),
+                baseDirectory));
   }
 
   private void addInputs(
@@ -218,7 +213,7 @@ public final class SpawnInputExpander {
             inputFiles,
             artifactExpander,
             /* keepEmptyTreeArtifacts= */ true,
-            /* keepMiddlemanArtifacts= */ true);
+            /* keepRunfilesTreeArtifacts= */ true);
     for (ActionInput input : inputs) {
       if (input instanceof TreeFileArtifact) {
         addMapping(
@@ -228,7 +223,7 @@ public final class SpawnInputExpander {
                 .getRelative(((TreeFileArtifact) input).getParentRelativePath()),
             input,
             baseDirectory);
-      } else if (isMiddlemanArtifact(input)) {
+      } else if (isRunfilesTreeArtifact(input)) {
         RunfilesTree runfilesTree =
             inputMetadataProvider.getRunfilesMetadata(input).getRunfilesTree();
         addSingleRunfilesTreeToInputs(
@@ -336,7 +331,7 @@ public final class SpawnInputExpander {
         spawn.getPathMapper(),
         visitor);
 
-    Map<Artifact, ImmutableList<FilesetOutputSymlink>> filesetMappings = spawn.getFilesetMappings();
+    ImmutableMap<Artifact, FilesetOutputTree> filesetMappings = spawn.getFilesetMappings();
     // filesetMappings is assumed to be very small, so no need to implement visitNonLeaves() for
     // improved runtime.
     visitor.visit(
@@ -374,7 +369,7 @@ public final class SpawnInputExpander {
             // better when a large tree is not the sole direct child of a nested set.
             ImmutableList<? extends ActionInput> leaves =
                 someInputFiles.getLeaves().stream()
-                    .filter(a -> !isTreeArtifact(a) && !isMiddlemanArtifact(a))
+                    .filter(a -> !isTreeArtifact(a) && !isRunfilesTreeArtifact(a))
                     .collect(toImmutableList());
             addInputs(
                 inputMap,
@@ -400,7 +395,7 @@ public final class SpawnInputExpander {
                     childVisitor);
               }
 
-              if (isMiddlemanArtifact(input)) {
+              if (isRunfilesTreeArtifact(input)) {
                 walkRunfilesTree(
                     baseDirectory,
                     inputMetadataProvider.getRunfilesMetadata(input).getRunfilesTree(),
@@ -478,7 +473,7 @@ public final class SpawnInputExpander {
     return input instanceof SpecialArtifact && ((SpecialArtifact) input).isTreeArtifact();
   }
 
-  private static boolean isMiddlemanArtifact(ActionInput input) {
-    return input instanceof Artifact && ((Artifact) input).isMiddlemanArtifact();
+  private static boolean isRunfilesTreeArtifact(ActionInput input) {
+    return input instanceof Artifact && ((Artifact) input).isRunfilesTree();
   }
 }

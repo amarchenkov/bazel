@@ -20,18 +20,15 @@ import static com.google.devtools.build.skyframe.EvaluationResultSubjectFactory.
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.testing.EqualsTester;
-import com.google.devtools.build.lib.analysis.ConfiguredRuleClassProvider;
 import com.google.devtools.build.lib.analysis.platform.DeclaredToolchainInfo;
 import com.google.devtools.build.lib.analysis.platform.ToolchainTypeInfo;
 import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.cmdline.PackageIdentifier;
 import com.google.devtools.build.lib.rules.platform.ToolchainTestCase;
-import com.google.devtools.build.lib.testutil.TestRuleClassProvider;
 import com.google.devtools.build.lib.vfs.Path;
 import com.google.devtools.build.skyframe.EvaluationResult;
 import com.google.devtools.build.skyframe.SkyKey;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
@@ -39,17 +36,6 @@ import org.junit.runners.JUnit4;
 /** Tests for {@link RegisteredToolchainsFunction} and {@link RegisteredToolchainsValue}. */
 @RunWith(JUnit4.class)
 public class RegisteredToolchainsFunctionTest extends ToolchainTestCase {
-
-  @Override
-  protected ConfiguredRuleClassProvider createRuleClassProvider() {
-    // testRegisteredToolchains_bzlmod uses the WORKSPACE suffixes.
-    ConfiguredRuleClassProvider.Builder builder = new ConfiguredRuleClassProvider.Builder();
-    TestRuleClassProvider.addStandardRules(builder);
-    builder.clearWorkspaceFileSuffixForTesting();
-    builder.addWorkspaceFileSuffix(
-        "register_toolchains('//toolchain:suffix_toolchain_1', '//toolchain:suffix_toolchain_2')");
-    return builder.build();
-  }
 
   @Test
   public void testRegisteredToolchains() throws Exception {
@@ -77,7 +63,7 @@ public class RegisteredToolchainsFunctionTest extends ToolchainTestCase {
                             && toolchain.execConstraints().get(setting).equals(linuxConstraint)
                             && toolchain.targetConstraints().get(setting).equals(macConstraint)
                             && toolchain
-                                .toolchainLabel()
+                                .resolvedToolchainLabel()
                                 .equals(
                                     Label.parseCanonicalUnchecked("//toolchain:toolchain_1_impl"))))
         .isTrue();
@@ -90,7 +76,7 @@ public class RegisteredToolchainsFunctionTest extends ToolchainTestCase {
                             && toolchain.execConstraints().get(setting).equals(macConstraint)
                             && toolchain.targetConstraints().get(setting).equals(linuxConstraint)
                             && toolchain
-                                .toolchainLabel()
+                                .resolvedToolchainLabel()
                                 .equals(
                                     Label.parseCanonicalUnchecked("//toolchain:toolchain_2_impl"))))
         .isTrue();
@@ -119,7 +105,10 @@ public class RegisteredToolchainsFunctionTest extends ToolchainTestCase {
         )
         """);
 
-    rewriteModuleDotBazel("register_toolchains('//toolchain:toolchain_1')");
+    rewriteModuleDotBazel(
+        """
+        register_toolchains('//toolchain:toolchain_1')
+        """);
     useConfiguration("--extra_toolchains=//extra:extra_toolchain");
 
     SkyKey toolchainsKey = RegisteredToolchainsValue.key(targetConfigKey, /* debug= */ false);
@@ -191,7 +180,10 @@ public class RegisteredToolchainsFunctionTest extends ToolchainTestCase {
 
   @Test
   public void testRegisteredToolchains_notToolchain() throws Exception {
-    rewriteModuleDotBazel("register_toolchains('//error:not_a_toolchain')");
+    rewriteModuleDotBazel(
+        """
+        register_toolchains("//error:not_a_toolchain")
+        """);
     scratch.file("error/BUILD", "filegroup(name = 'not_a_toolchain')");
 
     // Request the toolchains.
@@ -211,7 +203,10 @@ public class RegisteredToolchainsFunctionTest extends ToolchainTestCase {
   // don't provide the DeclaredToolchainInfo provider.
   @Test
   public void testRegisteredToolchains_fakeToolchain() throws Exception {
-    rewriteModuleDotBazel("register_toolchains('//error:not_a_toolchain')");
+    rewriteModuleDotBazel(
+        """
+        register_toolchains("//error:not_a_toolchain")
+        """);
     scratch.file(
         "error/fake_toolchain.bzl",
         """
@@ -245,7 +240,10 @@ public class RegisteredToolchainsFunctionTest extends ToolchainTestCase {
   // RegisteredToolchainsFunction will fail.
   @Test
   public void testRegisteredToolchains_wildcard_fakeToolchain() throws Exception {
-    rewriteModuleDotBazel("register_toolchains('//error:all')");
+    rewriteModuleDotBazel(
+        """
+        register_toolchains("//error:all")
+        """);
     scratch.file(
         "error/fake_toolchain.bzl",
         """
@@ -295,7 +293,10 @@ public class RegisteredToolchainsFunctionTest extends ToolchainTestCase {
         ImmutableList.of("//constraints:mac"),
         ImmutableList.of("//constraints:linux"),
         "baz");
-    rewriteModuleDotBazel("register_toolchains('//extra/...')");
+    rewriteModuleDotBazel(
+        """
+        register_toolchains("//extra/...")
+        """);
 
     SkyKey toolchainsKey = RegisteredToolchainsValue.key(targetConfigKey, /* debug= */ false);
     EvaluationResult<RegisteredToolchainsValue> result =
@@ -378,7 +379,10 @@ public class RegisteredToolchainsFunctionTest extends ToolchainTestCase {
     addSimpleToolchain("extra/xxx/zzz", "bbb");
     addSimpleToolchain("extra/xxx/zzz", "ccc");
     addSimpleToolchain("extra/xxx/zzz", "aaa");
-    rewriteModuleDotBazel("register_toolchains('//extra/...')");
+    rewriteModuleDotBazel(
+        """
+        register_toolchains("//extra/...")
+        """);
 
     SkyKey toolchainsKey = RegisteredToolchainsValue.key(targetConfigKey, /* debug= */ false);
     EvaluationResult<RegisteredToolchainsValue> result =
@@ -421,7 +425,10 @@ public class RegisteredToolchainsFunctionTest extends ToolchainTestCase {
 
   @Test
   public void testRegisteredToolchains_reload() throws Exception {
-    rewriteModuleDotBazel("register_toolchains('//toolchain:toolchain_1')");
+    rewriteModuleDotBazel(
+        """
+        register_toolchains("//toolchain:toolchain_1")
+        """);
 
     SkyKey toolchainsKey = RegisteredToolchainsValue.key(targetConfigKey, /* debug= */ false);
     EvaluationResult<RegisteredToolchainsValue> result =
@@ -431,7 +438,10 @@ public class RegisteredToolchainsFunctionTest extends ToolchainTestCase {
         .contains(Label.parseCanonicalUnchecked("//toolchain:toolchain_1_impl"));
 
     // Re-write the MODULE.bazel.
-    rewriteModuleDotBazel("register_toolchains('//toolchain:toolchain_2')");
+    rewriteModuleDotBazel(
+        """
+        register_toolchains("//toolchain:toolchain_2")
+        """);
 
     toolchainsKey = RegisteredToolchainsValue.key(targetConfigKey, /* debug= */ false);
     result = requestToolchainsFromSkyframe(toolchainsKey);
@@ -442,7 +452,6 @@ public class RegisteredToolchainsFunctionTest extends ToolchainTestCase {
 
   @Test
   public void testRegisteredToolchains_bzlmod() throws Exception {
-    setBuildLanguageOptions("--enable_workspace");
     scratch.overwriteFile(
         "MODULE.bazel",
         "register_toolchains('//:tool')",
@@ -488,7 +497,7 @@ public class RegisteredToolchainsFunctionTest extends ToolchainTestCase {
 
     // Everyone depends on toolchain_def@1.0 for the declare_toolchain macro.
     Path toolchainDefDir = moduleRoot.getRelative("toolchain_def+1.0");
-    scratch.file(toolchainDefDir.getRelative("WORKSPACE").getPathString());
+    scratch.file(toolchainDefDir.getRelative("REPO.bazel").getPathString());
     scratch.file(
         toolchainDefDir.getRelative("BUILD").getPathString(),
         "toolchain_type(name = 'test_toolchain')");
@@ -509,7 +518,7 @@ public class RegisteredToolchainsFunctionTest extends ToolchainTestCase {
 
     // Now create the toolchains for each module.
     for (String repo : ImmutableList.of("bbb+1.0", "ccc+1.1", "ddd+1.0", "ddd+1.1", "eee+1.0")) {
-      scratch.file(moduleRoot.getRelative(repo).getRelative("WORKSPACE").getPathString());
+      scratch.file(moduleRoot.getRelative(repo).getRelative("REPO.bazel").getPathString());
       scratch.file(
           moduleRoot.getRelative(repo).getRelative("BUILD").getPathString(),
           "load('@toolchain_def//:toolchain_def.bzl', 'declare_toolchain')",
@@ -520,24 +529,7 @@ public class RegisteredToolchainsFunctionTest extends ToolchainTestCase {
         "BUILD",
         "load('@toolchain_def//:toolchain_def.bzl', 'declare_toolchain')",
         "declare_toolchain(name='dev_tool')",
-        "declare_toolchain(name='tool')",
-        "declare_toolchain(name='wstool')",
-        "declare_toolchain(name='wstool2')");
-    scratch.overwriteFile(
-        "WORKSPACE",
-        Stream.concat(
-                analysisMock.getWorkspaceContents(mockToolsConfig).stream()
-                    // The register_toolchains calls usually live in the WORKSPACE suffixes.
-                    // BazelAnalysisMock moves the mock registrations to the actual WORKSPACE file
-                    // as most Java tests don't run with the suffixes. This test class does, so we
-                    // skip over the "unnatural" registrations.
-                    .filter(line -> !line.startsWith("register_toolchains(")),
-                // Register a toolchain explicitly that is also registered in the WORKSPACE suffix.
-                Stream.of(
-                    "register_toolchains('//:wstool')",
-                    "register_toolchains('//toolchain:suffix_toolchain_2')",
-                    "register_toolchains('//:wstool2')"))
-            .toArray(String[]::new));
+        "declare_toolchain(name='tool')");
     invalidatePackages();
 
     SkyKey toolchainsKey = RegisteredToolchainsValue.key(targetConfigKey, /* debug= */ false);
@@ -548,24 +540,17 @@ public class RegisteredToolchainsFunctionTest extends ToolchainTestCase {
     }
     assertThatEvaluationResult(result).hasNoError();
 
-    // Verify that the toolchains registered with bzlmod come in the BFS order and before WORKSPACE
-    // registrations.
+    // Verify that the toolchains registered with bzlmod come in the BFS order
     assertToolchainLabels(result.get(toolchainsKey))
         .containsAtLeast(
             // Root module toolchains
             Label.parseCanonical("//:tool_impl"),
             Label.parseCanonical("//:dev_tool_impl"),
-            // WORKSPACE toolchains
-            Label.parseCanonical("//:wstool_impl"),
-            Label.parseCanonical("//toolchain:suffix_toolchain_2_impl"),
-            Label.parseCanonical("//:wstool2_impl"),
             // Other modules' toolchains
             Label.parseCanonical("@@bbb+//:tool_impl"),
             Label.parseCanonical("@@ccc+//:tool_impl"),
             Label.parseCanonical("@@eee+//:tool_impl"),
-            Label.parseCanonical("@@ddd+//:tool_impl"),
-            // WORKSPACE suffix toolchains
-            Label.parseCanonical("//toolchain:suffix_toolchain_1_impl"))
+            Label.parseCanonical("@@ddd+//:tool_impl"))
         .inOrder();
   }
 
@@ -602,7 +587,9 @@ public class RegisteredToolchainsFunctionTest extends ToolchainTestCase {
         """);
 
     rewriteModuleDotBazel(
-        "register_toolchains('//toolchain:toolchain_1', '//extra:extra_toolchain')");
+        """
+        register_toolchains("//toolchain:toolchain_1", "//extra:extra_toolchain")
+        """);
 
     SkyKey toolchainsKey = RegisteredToolchainsValue.key(targetConfigKey, /* debug= */ false);
     EvaluationResult<RegisteredToolchainsValue> result =
@@ -652,7 +639,9 @@ public class RegisteredToolchainsFunctionTest extends ToolchainTestCase {
         """);
 
     rewriteModuleDotBazel(
-        "register_toolchains('//toolchain:toolchain_1', '//extra:extra_toolchain')");
+        """
+        register_toolchains("//toolchain:toolchain_1", "//extra:extra_toolchain")
+        """);
 
     SkyKey toolchainsKey = RegisteredToolchainsValue.key(targetConfigKey, /* debug= */ true);
     EvaluationResult<RegisteredToolchainsValue> result =
@@ -663,8 +652,9 @@ public class RegisteredToolchainsFunctionTest extends ToolchainTestCase {
     RegisteredToolchainsValue registeredToolchainsValue = result.get(toolchainsKey);
     assertThat(registeredToolchainsValue.rejectedToolchains()).isNotNull();
     assertThat(registeredToolchainsValue.rejectedToolchains())
-        .containsEntry(
-            Label.parseCanonicalUnchecked("//extra:extra_toolchain_impl"),
+        .containsCell(
+            testToolchainTypeLabel,
+            Label.parseCanonicalUnchecked("//extra:extra_toolchain"),
             "mismatching config settings: optimized");
   }
 
@@ -710,7 +700,9 @@ public class RegisteredToolchainsFunctionTest extends ToolchainTestCase {
         """);
 
     rewriteModuleDotBazel(
-        "register_toolchains('//toolchain:toolchain_1', '//extra:extra_toolchain')");
+        """
+        register_toolchains("//toolchain:toolchain_1", "//extra:extra_toolchain")
+        """);
 
     // Need this so the feature flag is actually gone from the configuration.
     useConfiguration("--enforce_transitive_configs_for_config_feature_flag");
@@ -723,7 +715,7 @@ public class RegisteredToolchainsFunctionTest extends ToolchainTestCase {
         .hasMessageThat()
         .contains(
             "Unrecoverable errors resolving config_setting associated with"
-                + " //extra:extra_toolchain_impl: For config_setting flagged, Feature flag"
+                + " //extra:extra_toolchain: For config_setting flagged, Feature flag"
                 + " //extra:flag was accessed in a configuration it is not present in.");
   }
 
@@ -735,7 +727,8 @@ public class RegisteredToolchainsFunctionTest extends ToolchainTestCase {
                 ToolchainTypeInfo.create(Label.parseCanonicalUnchecked("//test:toolchain")))
             .addExecConstraints(ImmutableList.of())
             .addTargetConstraints(ImmutableList.of())
-            .toolchainLabel(Label.parseCanonicalUnchecked("//test/toolchain_impl_1"))
+            .resolvedToolchainLabel(Label.parseCanonicalUnchecked("//test/toolchain_impl_1"))
+            .targetLabel(Label.parseCanonicalUnchecked("//test/toolchain_1"))
             .build();
     DeclaredToolchainInfo toolchain2 =
         DeclaredToolchainInfo.builder()
@@ -743,7 +736,8 @@ public class RegisteredToolchainsFunctionTest extends ToolchainTestCase {
                 ToolchainTypeInfo.create(Label.parseCanonicalUnchecked("//test:toolchain")))
             .addExecConstraints(ImmutableList.of())
             .addTargetConstraints(ImmutableList.of())
-            .toolchainLabel(Label.parseCanonicalUnchecked("//test/toolchain_impl_2"))
+            .resolvedToolchainLabel(Label.parseCanonicalUnchecked("//test/toolchain_impl_2"))
+            .targetLabel(Label.parseCanonicalUnchecked("//test/toolchain_2"))
             .build();
 
     new EqualsTester()

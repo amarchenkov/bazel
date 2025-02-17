@@ -1,4 +1,4 @@
-load("@rules_java//java:defs.bzl", "java_test")
+load("@rules_java//java:defs.bzl", "java_library", "java_test")
 
 package(
     default_applicable_licenses = ["//:license"],
@@ -46,11 +46,9 @@ java_library(
         "//third_party:netty",
         "//third_party:truth",
         "//third_party/grpc-java:grpc-jar",
-        "//third_party/protobuf:protobuf_java",
-        "//third_party/protobuf:protobuf_java_util",
-        "@googleapis//:google_devtools_build_v1_build_events_java_proto",
-        "@googleapis//:google_devtools_build_v1_build_status_java_proto",
-        "@googleapis//:google_devtools_build_v1_publish_build_event_java_proto",
+        "@com_google_protobuf//:protobuf_java",
+        "@com_google_protobuf//:protobuf_java_util",
+        "@googleapis//google/devtools/build/v1:build_java_proto",
     ],
 )
 
@@ -70,12 +68,10 @@ java_test(
         "//third_party:junit4",
         "//third_party:truth",
         "//third_party/grpc-java:grpc-jar",
-        "//third_party/protobuf:protobuf_java",
-        "//third_party/protobuf:protobuf_java_util",
-        "@googleapis//:google_devtools_build_v1_build_events_java_proto",
-        "@googleapis//:google_devtools_build_v1_build_status_java_proto",
-        "@googleapis//:google_devtools_build_v1_publish_build_event_java_grpc",
-        "@googleapis//:google_devtools_build_v1_publish_build_event_java_proto",
+        "@com_google_protobuf//:protobuf_java",
+        "@com_google_protobuf//:protobuf_java_util",
+        "@googleapis//google/devtools/build/v1:build_java_grpc",
+        "@googleapis//google/devtools/build/v1:build_java_proto",
     ],
 )
 
@@ -91,9 +87,9 @@ java_test(
         "//third_party:guava",
         "//third_party:junit4",
         "//third_party/grpc-java:grpc-jar",
-        "//third_party/protobuf:protobuf_java",
-        "@googleapis//:google_devtools_build_v1_publish_build_event_java_grpc",
-        "@googleapis//:google_devtools_build_v1_publish_build_event_java_proto",
+        "@com_google_protobuf//:protobuf_java",
+        "@googleapis//google/devtools/build/v1:build_java_grpc",
+        "@googleapis//google/devtools/build/v1:build_java_proto",
     ],
 )
 
@@ -120,6 +116,7 @@ java_test(
         "//src/main/java/com/google/devtools/build/lib/remote/util",
         "//src/main/java/com/google/devtools/build/lib/util:abrupt_exit_exception",
         "//src/main/java/com/google/devtools/build/lib/util:exit_code",
+        "//src/main/protobuf:command_line_java_proto",
         "//src/test/java/com/google/devtools/build/lib/analysis/util",
         "//src/test/java/com/google/devtools/build/lib/buildtool/util",
         "//src/test/java/com/google/devtools/build/lib/testutil:TestConstants",
@@ -129,10 +126,9 @@ java_test(
         "//third_party:junit4",
         "//third_party:truth",
         "//third_party/grpc-java:grpc-jar",
-        "//third_party/protobuf:protobuf_java",
-        "@googleapis//:google_devtools_build_v1_build_events_java_proto",
-        "@googleapis//:google_devtools_build_v1_publish_build_event_java_grpc",
-        "@googleapis//:google_devtools_build_v1_publish_build_event_java_proto",
+        "@com_google_protobuf//:protobuf_java",
+        "@googleapis//google/devtools/build/v1:build_java_grpc",
+        "@googleapis//google/devtools/build/v1:build_java_proto",
         "@maven//:com_google_testparameterinjector_test_parameter_injector",
         "@remoteapis//:build_bazel_remote_execution_v2_remote_execution_java_proto",
     ],

@@ -179,6 +179,12 @@ lines of primarily Scala and Python code powering data-intensive
 applications, including complex codegen and container build processes, with
 Bazel.
 
+### [GermanTechJobs](https://germantechjobs.de){: .external}
+<img src="https://upload.wikimedia.org/wikipedia/commons/9/98/GermanTechJobs_Logo.png" width="150" align="right">
+
+Bazel has simplified our workflows 10-fold and enabled shipping features at
+scale.
+
 ### [Google](https://google.com){: .external}
 <img src="https://upload.wikimedia.org/wikipedia/commons/2/2f/Google_2015_logo.svg" width="150" align="right">
 
@@ -597,6 +603,14 @@ seamlessly from normal Java code.
 Heron is a realtime, distributed, fault-tolerant stream processing engine from
 Twitter.
 
+### [Internet Computer Protocol](https://internetcomputer.org/){: .external}
+
+<img src="https://internetcomputer.org/img/IC_logo_horizontal_white.svg" width="120" align="right">
+
+The Internet Computer Protocol is a publicly available blockchain network that
+enables replicated execution of general-purpose computation, serving hundreds
+of thousands of applications and their users.
+
 ### [Jazzer](https://github.com/CodeIntelligenceTesting/jazzer){: .external}
 
 <img src="https://www.code-intelligence.com/hubfs/Logos/CI%20Logos/Jazzer_einfach.png" width="120" align="right">
@@ -623,6 +637,13 @@ and scaling of applications.
 ### [Kythe](https://github.com/google/kythe){: .external}
 
 An ecosystem for building tools that work with code.
+
+### [ls-lint](https://github.com/loeffel-io/ls-lint){: .external}
+
+<img src="https://raw.githubusercontent.com/loeffel-io/ls-lint/master/assets/logo/ls-lint.png" width="75" align="right">
+
+An extremely fast directory and filename linter - Bring some structure to your
+project file system.
 
 ### [Nomulus](https://github.com/google/nomulus){: .external}
 

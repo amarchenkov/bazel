@@ -13,14 +13,21 @@
 // limitations under the License.
 package com.google.devtools.build.lib.exec;
 
+import static com.google.common.base.Preconditions.checkState;
+import static com.google.common.collect.ImmutableList.toImmutableList;
+
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.flogger.GoogleLogger;
 import com.google.devtools.build.lib.actions.AbstractAction;
 import com.google.devtools.build.lib.actions.ActionInput;
+import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.actions.Artifact.TreeFileArtifact;
 import com.google.devtools.build.lib.actions.ExecException;
-import com.google.devtools.build.lib.actions.FileArtifactValue.UnresolvedSymlinkArtifactValue;
+import com.google.devtools.build.lib.actions.FileArtifactValue;
 import com.google.devtools.build.lib.actions.InputMetadataProvider;
+import com.google.devtools.build.lib.actions.RunfilesArtifactValue;
+import com.google.devtools.build.lib.actions.RunfilesTree;
 import com.google.devtools.build.lib.actions.Spawn;
 import com.google.devtools.build.lib.actions.SpawnResult;
 import com.google.devtools.build.lib.actions.Spawns;
@@ -152,6 +159,15 @@ public class ExpandedSpawnLogContext extends SpawnLogContext {
       builder.addAllEnvironmentVariables(getEnvironmentVariables(spawn));
 
       ImmutableSet<? extends ActionInput> toolFiles = spawn.getToolFiles().toSet();
+      ImmutableList<PathFragment> toolRunfilesDirectories =
+          toolFiles.stream()
+              .filter(
+                  actionInput ->
+                      actionInput instanceof Artifact artifact && artifact.isRunfilesTree())
+              .map(inputMetadataProvider::getRunfilesMetadata)
+              .map(RunfilesArtifactValue::getRunfilesTree)
+              .map(RunfilesTree::getExecPath)
+              .collect(toImmutableList());
 
       try (SilentCloseable c1 = Profiler.instance().profile("logSpawn/inputs")) {
         for (Map.Entry<PathFragment, ActionInput> e : inputMap.entrySet()) {
@@ -160,30 +176,34 @@ public class ExpandedSpawnLogContext extends SpawnLogContext {
 
           if (input instanceof VirtualActionInput.EmptyActionInput) {
             // Do not include a digest, as it's a waste of space.
-            builder.addInputsBuilder().setPath(displayPath.getPathString());
+            builder
+                .addInputsBuilder()
+                .setPath(displayPath.getPathString())
+                .setIsTool(toolRunfilesDirectories.stream().anyMatch(displayPath::startsWith));
             continue;
           }
 
           boolean isTool =
               toolFiles.contains(input)
-                  || input instanceof TreeFileArtifact treeFileArtifact
-                      && toolFiles.contains(treeFileArtifact.getParent());
+                  || (input instanceof TreeFileArtifact treeFileArtifact
+                      && toolFiles.contains(treeFileArtifact.getParent()))
+                  || toolRunfilesDirectories.stream().anyMatch(displayPath::startsWith);
 
           Path contentPath = fileSystem.getPath(execRoot.getRelative(input.getExecPathString()));
 
-          if (isInputDirectory(input, contentPath, inputMetadataProvider)) {
+          if (isInputDirectory(input, inputMetadataProvider)) {
             listDirectoryContents(
                 displayPath, contentPath, builder::addInputs, inputMetadataProvider, isTool);
             continue;
           }
 
           if (input.isSymlink()) {
-            UnresolvedSymlinkArtifactValue metadata =
-                (UnresolvedSymlinkArtifactValue) inputMetadataProvider.getInputMetadata(input);
+            FileArtifactValue metadata = inputMetadataProvider.getInputMetadata(input);
+            checkState(metadata.getType().isSymlink(), metadata);
             builder
                 .addInputsBuilder()
                 .setPath(displayPath.getPathString())
-                .setSymlinkTargetPath(metadata.getSymlinkTarget())
+                .setSymlinkTargetPath(metadata.getUnresolvedSymlinkTarget())
                 .setIsTool(isTool);
             continue;
           }
@@ -228,8 +248,7 @@ public class ExpandedSpawnLogContext extends SpawnLogContext {
                           xattrProvider,
                           digestHashFunction,
                           /* includeHashFunctionName= */ true));
-            } else if (!output.isSymlink() && path.isDirectory()) {
-              // TODO(tjgq): Tighten once --incompatible_disallow_unsound_directory_outputs is gone.
+            } else if (output.isDirectory() && path.isDirectory()) {
               listDirectoryContents(
                   output.getExecPath(),
                   path,

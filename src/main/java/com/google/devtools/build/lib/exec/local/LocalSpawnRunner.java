@@ -107,7 +107,7 @@ public class LocalSpawnRunner implements SpawnRunner {
       BinTools binTools,
       ProcessWrapper processWrapper,
       RunfilesTreeUpdater runfilesTreeUpdater) {
-    this.execRoot = execRoot;
+    this.execRoot = execRoot.devirtualize();
     this.processWrapper = processWrapper;
     this.localExecutionOptions = Preconditions.checkNotNull(localExecutionOptions);
     this.hostName = NetUtil.getCachedShortHostName();
@@ -353,7 +353,7 @@ public class LocalSpawnRunner implements SpawnRunner {
       for (ActionInput input : spawn.getInputFiles().toList()) {
         if (input instanceof VirtualActionInput virtualActionInput) {
           virtualActionInput.atomicallyWriteRelativeTo(execRoot);
-        } else if ((input instanceof Artifact) && ((Artifact) input).isMiddlemanArtifact()) {
+        } else if ((input instanceof Artifact) && ((Artifact) input).isRunfilesTree()) {
           runfilesTrees.add(
               context.getInputMetadataProvider().getRunfilesMetadata(input).getRunfilesTree());
         }
@@ -378,8 +378,8 @@ public class LocalSpawnRunner implements SpawnRunner {
 
         SubprocessBuilder subprocessBuilder = new SubprocessBuilder();
         subprocessBuilder.setWorkingDirectory(execRoot.getPathFile());
-        subprocessBuilder.setStdout(outErr.getOutputPath().getPathFile());
-        subprocessBuilder.setStderr(outErr.getErrorPath().getPathFile());
+        subprocessBuilder.setStdout(outErr.getOutputPath().devirtualize().getPathFile());
+        subprocessBuilder.setStderr(outErr.getErrorPath().devirtualize().getPathFile());
         subprocessBuilder.setEnv(environment);
         ImmutableList<String> args;
         if (processWrapper != null) {
@@ -392,7 +392,7 @@ public class LocalSpawnRunner implements SpawnRunner {
                   .addExecutionInfo(spawn.getExecutionInfo())
                   .setTimeout(context.getTimeout());
           statisticsPath = tmpDir.getRelative("stats.out");
-          commandLineBuilder.setStatisticsPath(statisticsPath);
+          commandLineBuilder.setStatisticsPath(statisticsPath.asFragment());
           args = ImmutableList.copyOf(commandLineBuilder.build());
         } else {
           subprocessBuilder.setTimeoutMillis(context.getTimeout().toMillis());
@@ -493,7 +493,7 @@ public class LocalSpawnRunner implements SpawnRunner {
       }
     }
 
-    private boolean wasTimeout(Duration timeout, Duration wallTime) {
+    private static boolean wasTimeout(Duration timeout, Duration wallTime) {
       return !timeout.isZero() && wallTime.compareTo(timeout) > 0;
     }
 
@@ -562,6 +562,6 @@ public class LocalSpawnRunner implements SpawnRunner {
     PREFETCHING_LOCAL_INPUTS,
     LOCAL_ACTION_RUNNING,
     PERMANENT_ERROR,
-    SUCCESS;
+    SUCCESS
   }
 }

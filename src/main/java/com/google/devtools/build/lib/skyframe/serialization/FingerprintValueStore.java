@@ -15,10 +15,10 @@ package com.google.devtools.build.lib.skyframe.serialization;
 
 import static com.google.common.util.concurrent.Futures.immediateFailedFuture;
 import static com.google.common.util.concurrent.Futures.immediateFuture;
-import static com.google.common.util.concurrent.Futures.immediateVoidFuture;
+import static com.google.devtools.build.lib.skyframe.serialization.WriteStatuses.immediateWriteStatus;
 
 import com.google.common.util.concurrent.ListenableFuture;
-import com.google.protobuf.ByteString;
+import com.google.devtools.build.lib.skyframe.serialization.WriteStatuses.WriteStatus;
 import java.io.IOException;
 import java.util.concurrent.ConcurrentHashMap;
 import javax.annotation.Nullable;
@@ -33,7 +33,7 @@ public interface FingerprintValueStore {
    *
    * @return a future that completes when the write completes
    */
-  ListenableFuture<Void> put(ByteString fingerprint, byte[] serializedBytes);
+  WriteStatus put(KeyBytesProvider fingerprint, byte[] serializedBytes);
 
   /**
    * Retrieves the serialized bytes associated with {@code fingerprint}.
@@ -44,7 +44,7 @@ public interface FingerprintValueStore {
    * <p>The caller should deduplicate {@code get} calls to avoid multiple fetches of the same
    * fingerprint.
    */
-  ListenableFuture<byte[]> get(ByteString fingerprint) throws IOException;
+  ListenableFuture<byte[]> get(KeyBytesProvider fingerprint) throws IOException;
 
   /**
    * {@link FingerprintValueStore#get} was called with a fingerprint that does not exist in the
@@ -52,11 +52,12 @@ public interface FingerprintValueStore {
    */
   final class MissingFingerprintValueException extends Exception {
 
-    public MissingFingerprintValueException(ByteString fingerprint) {
+    public MissingFingerprintValueException(KeyBytesProvider fingerprint) {
       this(fingerprint, /* cause= */ null);
     }
 
-    public MissingFingerprintValueException(ByteString fingerprint, @Nullable Throwable cause) {
+    public MissingFingerprintValueException(
+        KeyBytesProvider fingerprint, @Nullable Throwable cause) {
       super("No remote value for " + fingerprint, cause);
     }
   }
@@ -67,17 +68,17 @@ public interface FingerprintValueStore {
 
   /** An in-memory {@link FingerprintValueStore} for testing. */
   static class InMemoryFingerprintValueStore implements FingerprintValueStore {
-    private final ConcurrentHashMap<ByteString, byte[]> fingerprintToContents =
+    public final ConcurrentHashMap<KeyBytesProvider, byte[]> fingerprintToContents =
         new ConcurrentHashMap<>();
 
     @Override
-    public ListenableFuture<Void> put(ByteString fingerprint, byte[] serializedBytes) {
+    public WriteStatus put(KeyBytesProvider fingerprint, byte[] serializedBytes) {
       fingerprintToContents.put(fingerprint, serializedBytes);
-      return immediateVoidFuture();
+      return immediateWriteStatus();
     }
 
     @Override
-    public ListenableFuture<byte[]> get(ByteString fingerprint) {
+    public ListenableFuture<byte[]> get(KeyBytesProvider fingerprint) {
       byte[] serializedBytes = fingerprintToContents.get(fingerprint);
       if (serializedBytes == null) {
         return immediateFailedFuture(new MissingFingerprintValueException(fingerprint));

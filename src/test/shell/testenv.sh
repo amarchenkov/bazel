@@ -58,6 +58,11 @@ if is_windows; then
 
   export JAVA_HOME="${JAVA_HOME:-$(ls -d C:/Program\ Files/Java/jdk* | sort | tail -n 1)}"
   export BAZEL_SH="$(cygpath -m /usr/bin/bash)"
+
+  # Disable MSYS path conversion that converts path-looking command arguments to
+  # Windows paths (even if they arguments are not in fact paths).
+  export MSYS_NO_PATHCONV=1
+  export MSYS2_ARG_CONV_EXCL="*"
 fi
 
 # Make the command "bazel" available for tests.
@@ -92,7 +97,7 @@ BAZEL_RUNFILES="$TEST_SRCDIR/_main"
 workspace_file="${BAZEL_RUNFILES}/WORKSPACE"
 
 # Where to register toolchains
-TOOLCHAIN_REGISTRAION_FILE="MODULE.bazel"
+TOOLCHAIN_REGISTRATION_FILE="MODULE.bazel"
 
 # Tools directory location
 tools_dir="$(dirname $(rlocation io_bazel/tools/BUILD))"
@@ -356,6 +361,10 @@ EOF
   fi
 }
 
+function enable_disk_cache() {
+  echo "common --disk_cache=$TEST_TMPDIR/disk_cache" >> $TEST_TMPDIR/bazelrc
+}
+
 function setup_android_sdk_support() {
   # Required for runfiles library on Windows, since $(rlocation) lookups
   # can't do directories. We use android-28's android.jar as the anchor
@@ -496,7 +505,7 @@ function maybe_setup_python_windows_tools() {
 
   mkdir -p tools/python/windows
   cat > tools/python/windows/BUILD << EOF
-load("@bazel_tools//tools/python:toolchain.bzl", "py_runtime_pair")
+load("@rules_python//python:py_runtime_pair.bzl", "py_runtime_pair")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -578,16 +587,15 @@ function add_rules_python() {
   add_bazel_dep "rules_python" "$1"
 }
 
-function add_rules_proto() {
-  add_bazel_dep "rules_proto" "$1"
-}
-
 function add_rules_license() {
   add_bazel_dep "rules_license" "$1"
 }
 
 function add_protobuf() {
-  add_bazel_dep "protobuf" "$1"
+  version=$(get_version_from_default_lock_file "protobuf")
+  cat >> "$1" <<EOF
+bazel_dep(name = "protobuf", version = "$version", repo_name = "com_google_protobuf")
+EOF
 }
 
 function add_rules_testing() {
@@ -601,7 +609,9 @@ EOF
 # Note: this function echos the MODULE.bazel file path.
 function setup_module_dot_bazel() {
   module_dot_bazel=${1:-MODULE.bazel}
-  touch $module_dot_bazel
+  cat > $module_dot_bazel <<EOF
+module(name = 'test')
+EOF
   cp -f $(rlocation io_bazel/src/test/tools/bzlmod/MODULE.bazel.lock) "$(dirname ${module_dot_bazel})/MODULE.bazel.lock"
   echo $module_dot_bazel
 }
@@ -764,11 +774,6 @@ create_and_cd_client
 
 # Optional environment changes.
 
-function disable_bzlmod() {
-  add_to_bazelrc "common --noenable_bzlmod"
-  add_to_bazelrc "common --enable_workspace"
-}
-
 # Creates a fake Python default runtime that just outputs a marker string
 # indicating which version was used, without executing any Python code.
 function use_fake_python_runtimes_for_testsuite() {
@@ -785,7 +790,8 @@ function use_fake_python_runtimes_for_testsuite() {
   mkdir -p tools/python
 
   cat > tools/python/BUILD << EOF
-load("@bazel_tools//tools/python:toolchain.bzl", "py_runtime_pair")
+load("@rules_python//python:py_runtime.bzl", "py_runtime")
+load("@rules_python//python:py_runtime_pair.bzl", "py_runtime_pair")
 
 package(default_visibility=["//visibility:public"])
 
@@ -840,9 +846,11 @@ EOF
 JDK_BUILD_TEMPLATE = ''
 EOF
   touch "${rules_java_workspace}/java/BUILD"
-  cat > "${rules_java_workspace}/java/repositories.bzl" <<EOF
+  cat > "${rules_java_workspace}/java/rules_java_deps.bzl" <<EOF
 def rules_java_dependencies():
     pass
+EOF
+  cat > "${rules_java_workspace}/java/repositories.bzl" <<EOF
 def rules_java_toolchains():
     pass
 EOF
@@ -856,6 +864,8 @@ def java_import(**attrs):
 def java_test(**attrs):
     native.java_test(**attrs)
 EOF
+  # Disable autoloads, because the Java mock isn't complete enough to support it
+  add_to_bazelrc "common --incompatible_autoload_externally="
   add_to_bazelrc "common --override_repository=rules_java=${rules_java_workspace}"
   add_to_bazelrc "common --override_repository=rules_java_builtin=${rules_java_workspace}"
 }

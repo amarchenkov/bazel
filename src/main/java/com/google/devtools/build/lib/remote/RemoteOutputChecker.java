@@ -22,11 +22,12 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.devtools.build.lib.actions.ActionInput;
 import com.google.devtools.build.lib.actions.Artifact;
-import com.google.devtools.build.lib.actions.FileArtifactValue.RemoteFileArtifactValue;
-import com.google.devtools.build.lib.actions.RemoteArtifactChecker;
+import com.google.devtools.build.lib.actions.FileArtifactValue;
+import com.google.devtools.build.lib.actions.OutputChecker;
 import com.google.devtools.build.lib.analysis.AnalysisResult;
 import com.google.devtools.build.lib.analysis.ConfiguredAspect;
 import com.google.devtools.build.lib.analysis.ConfiguredTarget;
+import com.google.devtools.build.lib.analysis.ExtraActionArtifactsProvider;
 import com.google.devtools.build.lib.analysis.FilesToRunProvider;
 import com.google.devtools.build.lib.analysis.ProviderCollection;
 import com.google.devtools.build.lib.analysis.TopLevelArtifactContext;
@@ -43,8 +44,8 @@ import java.util.function.Supplier;
 import java.util.regex.Pattern;
 import javax.annotation.Nullable;
 
-/** A {@link RemoteArtifactChecker} that checks the TTL of remote metadata. */
-public class RemoteOutputChecker implements RemoteArtifactChecker {
+/** An {@link OutputChecker} that checks the TTL of remote metadata. */
+public class RemoteOutputChecker implements OutputChecker {
   private enum CommandMode {
     UNKNOWN,
     BUILD,
@@ -162,6 +163,7 @@ public class RemoteOutputChecker implements RemoteArtifactChecker {
               .getImportantArtifacts();
       addOutputsToDownload(artifactsToBuild.toList());
       addRunfiles(target);
+      addExtraActionArtifacts(target);
     }
   }
 
@@ -194,6 +196,14 @@ public class RemoteOutputChecker implements RemoteArtifactChecker {
         continue;
       }
       addOutputToDownload(artifact);
+    }
+  }
+
+  private void addExtraActionArtifacts(ProviderCollection target) {
+    ExtraActionArtifactsProvider extraActionArtifactsProvider =
+        target.getProvider(ExtraActionArtifactsProvider.class);
+    if (extraActionArtifactsProvider != null) {
+      addOutputsToDownload(extraActionArtifactsProvider.getExtraActionArtifacts().toList());
     }
   }
 
@@ -277,7 +287,12 @@ public class RemoteOutputChecker implements RemoteArtifactChecker {
   }
 
   @Override
-  public boolean shouldTrustRemoteArtifact(ActionInput file, RemoteFileArtifactValue metadata) {
+  public boolean shouldTrustArtifact(ActionInput file, FileArtifactValue metadata) {
+    // Local metadata is always trusted.
+    if (!metadata.isRemote()) {
+      return true;
+    }
+
     // If Bazel should download this file, but it does not exist locally, returns false to rerun
     // the generating action to trigger the download (just like in the normal build, when local
     // outputs are missing).

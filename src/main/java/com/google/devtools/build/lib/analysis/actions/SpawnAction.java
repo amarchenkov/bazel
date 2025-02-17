@@ -51,7 +51,7 @@ import com.google.devtools.build.lib.actions.CommandLines;
 import com.google.devtools.build.lib.actions.CommandLines.CommandLineAndParamFileInfo;
 import com.google.devtools.build.lib.actions.CommandLines.ExpandedCommandLines;
 import com.google.devtools.build.lib.actions.ExecException;
-import com.google.devtools.build.lib.actions.FilesetOutputSymlink;
+import com.google.devtools.build.lib.actions.FilesetOutputTree;
 import com.google.devtools.build.lib.actions.ParamFileInfo;
 import com.google.devtools.build.lib.actions.PathMapper;
 import com.google.devtools.build.lib.actions.ResourceSetOrBuilder;
@@ -373,7 +373,11 @@ public class SpawnAction extends AbstractAction implements CommandAction {
       Fingerprint fp)
       throws CommandLineExpansionException, InterruptedException {
     fp.addString(GUID);
-    commandLines.addToFingerprint(actionKeyContext, artifactExpander, outputPathsMode, fp);
+    commandLines.addToFingerprint(
+        actionKeyContext,
+        artifactExpander,
+        PathMappers.getEffectiveOutputPathsMode(outputPathsMode, getMnemonic(), getExecutionInfo()),
+        fp);
     fp.addString(mnemonic);
     env.addTo(fp);
     fp.addStringMap(getExecutionInfo());
@@ -401,6 +405,11 @@ public class SpawnAction extends AbstractAction implements CommandAction {
     for (String var : getClientEnvironmentVariables()) {
       message.append("  Environment variables taken from the client environment: ");
       message.append(ShellEscaper.escapeString(var));
+      message.append('\n');
+    }
+    for (Map.Entry<String, String> entry : getExecutionInfo().entrySet()) {
+      message.append("  Execution info: ");
+      message.append(entry.getKey()).append('=').append(entry.getValue());
       message.append('\n');
     }
     try {
@@ -462,8 +471,8 @@ public class SpawnAction extends AbstractAction implements CommandAction {
               .build());
     }
     for (ActionInput input : spawn.getInputFiles().toList()) {
-      // Explicitly ignore middleman artifacts here.
-      if (!(input instanceof Artifact) || !((Artifact) input).isMiddlemanArtifact()) {
+      // Explicitly ignore runfiles tree artifacts here.
+      if (!(input instanceof Artifact) || !((Artifact) input).isRunfilesTree()) {
         info.addInputFile(input.getExecPathString());
       }
     }
@@ -490,7 +499,7 @@ public class SpawnAction extends AbstractAction implements CommandAction {
   /** A spawn instance that is tied to a specific SpawnAction. */
   private static final class ActionSpawn extends BaseSpawn {
     private final NestedSet<ActionInput> inputs;
-    private final Map<Artifact, ImmutableList<FilesetOutputSymlink>> filesetMappings;
+    private final Map<Artifact, FilesetOutputTree> filesetMappings;
     private final ImmutableMap<String, String> effectiveEnvironment;
     private final boolean reportOutputs;
     private final PathMapper pathMapper;
@@ -508,7 +517,7 @@ public class SpawnAction extends AbstractAction implements CommandAction {
         boolean envResolved,
         NestedSet<Artifact> inputs,
         Iterable<? extends ActionInput> additionalInputs,
-        Map<Artifact, ImmutableList<FilesetOutputSymlink>> filesetMappings,
+        Map<Artifact, FilesetOutputTree> filesetMappings,
         boolean reportOutputs,
         PathMapper pathMapper)
         throws CommandLineExpansionException {
@@ -540,7 +549,7 @@ public class SpawnAction extends AbstractAction implements CommandAction {
     private static void addNonFilesetInputs(
         NestedSetBuilder<ActionInput> builder,
         NestedSet<Artifact> inputs,
-        Map<Artifact, ImmutableList<FilesetOutputSymlink>> filesetMappings) {
+        Map<Artifact, FilesetOutputTree> filesetMappings) {
       if (filesetMappings.isEmpty()) {
         // Keep the original nested set intact. This aids callers that exploit the nested set
         // structure to perform optimizations (see SpawnInputExpander#walkInputs and its callers).
@@ -565,7 +574,7 @@ public class SpawnAction extends AbstractAction implements CommandAction {
     }
 
     @Override
-    public ImmutableMap<Artifact, ImmutableList<FilesetOutputSymlink>> getFilesetMappings() {
+    public ImmutableMap<Artifact, FilesetOutputTree> getFilesetMappings() {
       return ImmutableMap.copyOf(filesetMappings);
     }
 
@@ -852,13 +861,16 @@ public class SpawnAction extends AbstractAction implements CommandAction {
       return this;
     }
 
+    private static final Interner<ImmutableMap<String, String>> envInterner =
+        BlazeInterners.newWeakInterner();
+
     /**
      * Sets the map of environment variables. Do not use! This makes the builder ignore the 'default
      * shell environment', which is computed from the --action_env command line option.
      */
     @CanIgnoreReturnValue
     public Builder setEnvironment(Map<String, String> environment) {
-      this.environment = ImmutableMap.copyOf(environment);
+      this.environment = envInterner.intern(ImmutableMap.copyOf(environment));
       this.useDefaultShellEnvironment = false;
       return this;
     }

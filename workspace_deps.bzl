@@ -19,22 +19,21 @@ WORKSPACE_REPOS = {
     # Used in src/main/java/com/google/devtools/build/lib/bazel/rules/java/jdk.WORKSPACE.
     # Used in src/test/java/com/google/devtools/build/lib/blackbox/framework/blackbox.WORKSAPCE
     "rules_cc": {
-        "archive": "rules_cc-0.0.9.tar.gz",
-        "sha256": "2037875b9a4456dce4a79d112a8ae885bbc4aad968e6587dca6e64f3a0900cdf",
-        "urls": ["https://github.com/bazelbuild/rules_cc/releases/download/0.0.9/rules_cc-0.0.9.tar.gz"],
-        "strip_prefix": "rules_cc-0.0.9",
+        "archive": "rules_cc-0.0.16.tar.gz",
+        "sha256": "bbf1ae2f83305b7053b11e4467d317a7ba3517a12cef608543c1b1c5bf48a4df",
+        "urls": ["https://github.com/bazelbuild/rules_cc/releases/download/0.0.16/rules_cc-0.0.16.tar.gz"],
+        "strip_prefix": "rules_cc-0.0.16",
+    },
+    "com_google_protobuf": {
+        "archive": "protobuf-29.0-rc3.zip",
+        "sha256": "537d1c4edb6cbfa96d98a021650e3c455fffcf80dbdcea7fe46cb356e6e9732d",
+        "urls": ["https://github.com/protocolbuffers/protobuf/releases/download/v29.0-rc3/protobuf-29.0-rc3.zip"],
+        "strip_prefix": "protobuf-29.0-rc3",
     },
     "rules_java": {
-        "archive": "rules_java-7.11.1.tar.gz",
-        "sha256": "6f3ce0e9fba979a844faba2d60467843fbf5191d8ca61fa3d2ea17655b56bb8c",
-        "urls": ["https://github.com/bazelbuild/rules_java/releases/download/7.11.1/rules_java-7.11.1.tar.gz"],
-    },
-    # Used in src/test/java/com/google/devtools/build/lib/blackbox/framework/blackbox.WORKSAPCE
-    "rules_proto": {
-        "archive": "5.3.0-21.7.tar.gz",
-        "sha256": "dc3fb206a2cb3441b485eb1e423165b231235a1ea9b031b4433cf7bc1fa460dd",
-        "strip_prefix": "rules_proto-5.3.0-21.7",
-        "urls": ["https://github.com/bazelbuild/rules_proto/archive/refs/tags/5.3.0-21.7.tar.gz"],
+        "archive": "rules_java-8.9.0.tar.gz",
+        "sha256": "8daa0e4f800979c74387e4cd93f97e576ec6d52beab8ac94710d2931c57f8d8b",
+        "urls": ["https://github.com/bazelbuild/rules_java/releases/download/8.9.0/rules_java-8.9.0.tar.gz"],
     },
     "bazel_skylib": {
         "archive": "bazel-skylib-1.6.1.tar.gz",
@@ -47,15 +46,21 @@ WORKSPACE_REPOS = {
         "urls": ["https://github.com/bazelbuild/rules_license/releases/download/0.0.7/rules_license-0.0.7.tar.gz"],
     },
     "rules_python": {
-        "archive": "rules_python-0.24.0.tar.gz",
-        "sha256": "0a8003b044294d7840ac7d9d73eef05d6ceb682d7516781a4ec62eeb34702578",
-        "strip_prefix": "rules_python-0.24.0",
-        "urls": ["https://github.com/bazelbuild/rules_python/releases/download/0.24.0/rules_python-0.24.0.tar.gz"],
+        "archive": "rules_python-0.40.0.tar.gz",
+        "sha256": "690e0141724abb568267e003c7b6d9a54925df40c275a870a4d934161dc9dd53",
+        "strip_prefix": "rules_python-0.40.0",
+        "urls": ["https://github.com/bazelbuild/rules_python/releases/download/0.40.0/rules_python-0.40.0.tar.gz"],
     },
     "rules_pkg": {
         "archive": "rules_pkg-0.9.1.tar.gz",
         "sha256": "8f9ee2dc10c1ae514ee599a8b42ed99fa262b757058f65ad3c384289ff70c4b8",
         "urls": ["https://github.com/bazelbuild/rules_pkg/releases/download/0.9.1/rules_pkg-0.9.1.tar.gz"],
+    },
+    "rules_shell": {
+        "archive": "rules_shell-v0.1.1.tar.gz",
+        "sha256": "0d0c56d01c3c40420bf7bf14d73113f8a92fbd9f5cd13205a3b89f72078f0321",
+        "strip_prefix": "rules_shell-0.1.1",
+        "urls": ["https://github.com/bazelbuild/rules_shell/releases/download/v0.1.1/rules_shell-v0.1.1.tar.gz"],
     },
     "rules_testing": {
         "archive": "rules_testing-v0.6.0.tar.gz",
@@ -64,9 +69,9 @@ WORKSPACE_REPOS = {
         "urls": ["https://github.com/bazelbuild/rules_testing/releases/download/v0.6.0/rules_testing-v0.6.0.tar.gz"],
     },
     "remote_coverage_tools": {
-        "archive": "coverage_output_generator-v2.6.zip",
-        "sha256": "7006375f6756819b7013ca875eab70a541cf7d89142d9c511ed78ea4fefa38af",
-        "urls": ["https://mirror.bazel.build/bazel_coverage_output_generator/releases/coverage_output_generator-v2.6.zip"],
+        "archive": "coverage_output_generator-v2.8.zip",
+        "sha256": "172be177db06b16632335f27d50cee0786fb1873df344852db71b2171cd6d996",
+        "urls": ["https://mirror.bazel.build/bazel_coverage_output_generator/releases/coverage_output_generator-v2.8.zip"],
     },
 }
 

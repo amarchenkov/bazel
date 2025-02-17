@@ -29,7 +29,6 @@ import com.google.devtools.build.lib.bazel.commands.TargetFetcher.TargetFetcherE
 import com.google.devtools.build.lib.cmdline.RepositoryName;
 import com.google.devtools.build.lib.events.Event;
 import com.google.devtools.build.lib.events.Reporter;
-import com.google.devtools.build.lib.packages.semantics.BuildLanguageOptions;
 import com.google.devtools.build.lib.pkgcache.PackageOptions;
 import com.google.devtools.build.lib.rules.repository.RepositoryDelegatorFunction;
 import com.google.devtools.build.lib.rules.repository.RepositoryDirectoryValue;
@@ -39,6 +38,7 @@ import com.google.devtools.build.lib.runtime.Command;
 import com.google.devtools.build.lib.runtime.CommandEnvironment;
 import com.google.devtools.build.lib.runtime.KeepGoingOption;
 import com.google.devtools.build.lib.runtime.LoadingPhaseThreadsOption;
+import com.google.devtools.build.lib.runtime.commands.TargetPatternsHelper;
 import com.google.devtools.build.lib.runtime.commands.TestCommand;
 import com.google.devtools.build.lib.server.FailureDetails;
 import com.google.devtools.build.lib.server.FailureDetails.FailureDetail;
@@ -77,10 +77,7 @@ public final class FetchCommand implements BlazeCommand {
 
   @Override
   public void editOptions(OptionsParser optionsParser) {
-    // We only need to inject these options with fetch target (when there is a residue)
-    if (!optionsParser.getResidue().isEmpty()) {
-      TargetFetcher.injectNoBuildOption(optionsParser);
-    }
+    TargetFetcher.injectNoBuildOption(optionsParser);
   }
 
   @Override
@@ -107,17 +104,31 @@ public final class FetchCommand implements BlazeCommand {
           .injectExtraPrecomputedValues(
               ImmutableList.of(
                   PrecomputedValue.injected(
-                      RepositoryDelegatorFunction.FORCE_FETCH, env.getCommandId().toString())));
+                      fetchOptions.configure
+                          ? RepositoryDelegatorFunction.FORCE_FETCH_CONFIGURE
+                          : RepositoryDelegatorFunction.FORCE_FETCH,
+                      env.getCommandId().toString())));
     }
 
     BlazeCommandResult result;
     LoadingPhaseThreadsOption threadsOption = options.getOptions(LoadingPhaseThreadsOption.class);
+    List<String> targets;
     try {
-      if (!options.getResidue().isEmpty()) {
-        result = fetchTarget(env, options, options.getResidue());
+      targets = TargetPatternsHelper.readFrom(env, options);
+    } catch (TargetPatternsHelper.TargetPatternsHelperException e) {
+      env.getReporter().handle(Event.error(e.getMessage()));
+      return BlazeCommandResult.failureDetail(e.getFailureDetail());
+    }
+    try {
+      if (!targets.isEmpty()) {
+        if (!fetchOptions.repos.isEmpty()) {
+          return createFailedBlazeCommandResult(
+              env.getReporter(), "Target patterns and --repo cannot both be specified");
+        }
+        result = fetchTarget(env, options, targets);
       } else if (!fetchOptions.repos.isEmpty()) {
         result = fetchRepos(env, threadsOption, fetchOptions.repos);
-      } else { // --all, --configure, or just 'fetch'
+      } else { // --all or just 'fetch' (equivalent) or --configure
         result = fetchAll(env, threadsOption, fetchOptions.configure);
       }
     } catch (InterruptedException e) {
@@ -140,14 +151,6 @@ public final class FetchCommand implements BlazeCommand {
           env.getReporter(), Code.OPTIONS_INVALID, "You cannot run fetch with --nofetch");
     }
     FetchOptions fetchOptions = options.getOptions(FetchOptions.class);
-    // Only fetch targets works without bzlmod, other than that, fail.
-    if (options.getResidue().isEmpty()
-        && !options.getOptions(BuildLanguageOptions.class).enableBzlmod) {
-      return createFailedBlazeCommandResult(
-          env.getReporter(),
-          "Bzlmod has to be enabled for the following options to work: --all, "
-              + "--configure, --repo or --force. Run with --enable_bzlmod");
-    }
     int optionsCount =
         countTrue(
             fetchOptions.all,

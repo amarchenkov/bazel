@@ -96,9 +96,7 @@ public final class Label implements Comparable<Label>, StarlarkValue, SkyKey, Co
           // Used for select's `//conditions:default` label (not a target)
           "conditions",
           // Used for the public and private visibility labels (not targets)
-          "visibility",
-          // There is only one //external package
-          LabelConstants.EXTERNAL_PACKAGE_NAME.getPathString());
+          "visibility");
 
   // Intern "__pkg__" and "__subpackages__" pseudo-targets, which appears in labels used for
   // visibility specifications. This saves a couple tenths of a percent of RAM off the loading
@@ -181,9 +179,17 @@ public final class Label implements Comparable<Label>, StarlarkValue, SkyKey, Co
     if (parts.repo() == null) {
       // Certain package names when used without a "@" part are always absolutely in the main repo,
       // disregarding the current repo and repo mappings.
-      return ABSOLUTE_PACKAGE_NAMES.contains(parts.pkg())
-          ? RepositoryName.MAIN
-          : repoContext.currentRepo();
+      if (ABSOLUTE_PACKAGE_NAMES.contains(parts.pkg())) {
+        return RepositoryName.MAIN;
+      }
+      // The legacy //external package can only be referenced by external repos defined in
+      // WORKSPACE, which never use strict visibility. For the main repo repoContext.currentRepo()
+      // is equal to RepositoryName.MAIN.
+      if (LabelConstants.EXTERNAL_PACKAGE_NAME.getPathString().equals(parts.pkg())
+          && repoContext.repoMapping().ownerRepo() == null) {
+        return RepositoryName.MAIN;
+      }
+      return repoContext.currentRepo();
     }
     if (parts.repoIsCanonical()) {
       // This label uses the canonical label literal syntax starting with two @'s ("@@foo//bar").
@@ -683,7 +689,7 @@ public final class Label implements Comparable<Label>, StarlarkValue, SkyKey, Co
         // ignore
       }
     }
-    printer.append(getDisplayForm(mainRepoMapping));
+    printer.append(getShorthandDisplayForm(mainRepoMapping));
   }
 
   @Override
@@ -779,44 +785,8 @@ public final class Label implements Comparable<Label>, StarlarkValue, SkyKey, Co
     return Codec.INSTANCE;
   }
 
-  public static DeferredObjectCodec<Label> valueSharingCodec() {
-    return LabelValueSharingCodec.INSTANCE;
-  }
-
-  // TODO: b/359437873 - generate with @AutoCodec.
-  private static class LabelValueSharingCodec extends DeferredObjectCodec<Label> {
-
-    private static final LabelValueSharingCodec INSTANCE = new LabelValueSharingCodec();
-
-    @Override
-    public boolean autoRegister() {
-      return false;
-    }
-
-    @Override
-    public Class<Label> getEncodedClass() {
-      return Label.class;
-    }
-
-    @Override
-    public void serialize(SerializationContext context, Label id, CodedOutputStream codedOut)
-        throws SerializationException, IOException {
-      context.putSharedValue(id, /* distinguisher= */ null, LabelDeferredCodec.INSTANCE, codedOut);
-    }
-
-    @Override
-    public DeferredValue<Label> deserializeDeferred(
-        AsyncDeserializationContext context, CodedInputStream codedIn)
-        throws SerializationException, IOException {
-      SimpleDeferredValue<Label> value = SimpleDeferredValue.create();
-      context.getSharedValue(
-          codedIn,
-          /* distinguisher= */ null,
-          LabelDeferredCodec.INSTANCE,
-          value,
-          SimpleDeferredValue::set);
-      return value;
-    }
+  public static DeferredObjectCodec<Label> deferredCodec() {
+    return LabelDeferredCodec.INSTANCE;
   }
 
   private static class LabelDeferredCodec extends DeferredObjectCodec<Label> {

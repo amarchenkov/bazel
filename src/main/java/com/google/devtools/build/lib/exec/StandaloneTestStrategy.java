@@ -14,6 +14,8 @@
 
 package com.google.devtools.build.lib.exec;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
+
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Verify;
@@ -21,7 +23,6 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableMultimap;
 import com.google.common.collect.ImmutableSet;
-import com.google.common.collect.Maps;
 import com.google.common.io.ByteStreams;
 import com.google.devtools.build.lib.actions.ActionExecutionContext;
 import com.google.devtools.build.lib.actions.ActionInput;
@@ -83,11 +84,11 @@ public class StandaloneTestStrategy extends TestStrategy {
           .put("RUNFILES_DIR", TestPolicy.RUNFILES_DIR)
           .put("TEST_TMPDIR", TestPolicy.TEST_TMP_DIR)
           .put("RUN_UNDER_RUNFILES", "1")
-          .build();
+          .buildOrThrow();
 
   public static final TestPolicy DEFAULT_LOCAL_POLICY = new TestPolicy(ENV_VARS);
 
-  protected final Path tmpDirRoot;
+  private final Path tmpDirRoot;
 
   public StandaloneTestStrategy(
       ExecutionOptions executionOptions,
@@ -111,15 +112,15 @@ public class StandaloneTestStrategy extends TestStrategy {
         createEnvironment(
             actionExecutionContext, action, tmpDirRoot, executionOptions.splitXmlGeneration);
 
-    Map<String, String> executionInfo =
-        new TreeMap<>(action.getTestProperties().getExecutionInfo());
+    Map<String, String> executionInfo = new TreeMap<>(action.getExecutionInfo());
     if (!action.shouldAcceptCachedResult()) {
       // TODO(tjgq): We want to reject a previously cached result, but not prevent the result of the
       // current execution from being uploaded. We should introduce a separate execution requirement
       // for this.
       executionInfo.put(ExecutionRequirements.NO_CACHE, "");
     }
-    executionInfo.put(ExecutionRequirements.TIMEOUT, "" + getTimeout(action).getSeconds());
+    executionInfo.put(
+        ExecutionRequirements.TIMEOUT, Long.toString(action.getTimeout().toSeconds()));
 
     SimpleSpawn.LocalResourcesSupplier localResourcesSupplier =
         () ->
@@ -182,7 +183,7 @@ public class StandaloneTestStrategy extends TestStrategy {
 
         // e.g. /attemptsDir/attempt_1.dir/file
         destinationPath = attemptsDir.getRelative(destinationPathFragment);
-        destinationPath.getParentDirectory().createDirectory();
+        destinationPath.getParentDirectory().createDirectoryAndParents();
       }
 
       // Move to the destination.
@@ -302,7 +303,7 @@ public class StandaloneTestStrategy extends TestStrategy {
       relativeTmpDir = tmpDir.asFragment();
     }
     return DEFAULT_LOCAL_POLICY.computeTestEnvironment(
-        action, clientEnv, getTimeout(action), runfilesDir.relativeTo(execRoot), relativeTmpDir);
+        action, clientEnv, runfilesDir.relativeTo(execRoot), relativeTmpDir);
   }
 
   private TestAttemptResult beginTestAttempt(
@@ -365,6 +366,12 @@ public class StandaloneTestStrategy extends TestStrategy {
       SpawnResult spawnResult, TestResultData.Builder result) {
     BuildEventStreamProtos.TestResult.ExecutionInfo.Builder executionInfo =
         BuildEventStreamProtos.TestResult.ExecutionInfo.newBuilder();
+
+    // The return of `SpawnResult#exitCode()` is noted to only be meaningful if the subprocess
+    // actually executed. In this position, `spawnResult.exitCode()` is always meaningful,
+    // because the code only runs if `spawnResult.setupSuccess()` is previously verified to
+    // be `true`.
+    executionInfo.setExitCode(spawnResult.exitCode());
 
     if (spawnResult.isCacheHit()) {
       result.setRemotelyCached(true);
@@ -443,7 +450,10 @@ public class StandaloneTestStrategy extends TestStrategy {
       TestRunnerAction action, ImmutableMap<String, String> testEnv, SpawnResult result) {
     ImmutableList<String> args =
         ImmutableList.of(
-            action.getTestXmlGeneratorScript().getExecPath().getCallablePathString(),
+            action
+                .getTestXmlGeneratorScript()
+                .getExecPath()
+                .getCallablePathStringForOs(action.getExecutionSettings().getExecutionOs()),
             action.getTestLog().getExecPathString(),
             action.getXmlOutputPath().getPathString(),
             Integer.toString(result.getWallTimeInMs() / 1000),
@@ -459,28 +469,19 @@ public class StandaloneTestStrategy extends TestStrategy {
       envBuilder.put("TEST_SHARD_INDEX", "0");
       envBuilder.put("TEST_TOTAL_SHARDS", "0");
     }
-    Map<String, String> executionInfo =
-        Maps.newHashMapWithExpectedSize(action.getExecutionInfo().size() + 1);
-    executionInfo.putAll(action.getExecutionInfo());
-    if (result.exitCode() != 0) {
-      // If the test is failed, the spawn shouldn't use remote cache since the test.xml file is
-      // renamed immediately after the spawn execution. If there is another test attempt, the async
-      // upload will fail because it cannot read the file at original position.
-      executionInfo.put(ExecutionRequirements.NO_REMOTE_CACHE, "");
-    }
     return new SimpleSpawn(
         action,
         args,
         envBuilder.buildOrThrow(),
         // Pass the execution info of the action which is identical to the supported tags set on the
         // test target. In particular, this does not set the test timeout on the spawn.
-        ImmutableMap.copyOf(executionInfo),
+        action.getExecutionInfo(),
         ImmutableMap.of(),
-        /*inputs=*/ NestedSetBuilder.create(
+        /* inputs= */ NestedSetBuilder.create(
             Order.STABLE_ORDER, action.getTestXmlGeneratorScript(), action.getTestLog()),
-        /*tools=*/ NestedSetBuilder.emptySet(Order.STABLE_ORDER),
-        /*outputs=*/ ImmutableSet.of(ActionInputHelper.fromPath(action.getXmlOutputPath())),
-        /*mandatoryOutputs=*/ null,
+        /* tools= */ NestedSetBuilder.emptySet(Order.STABLE_ORDER),
+        /* outputs= */ ImmutableSet.of(ActionInputHelper.fromPath(action.getXmlOutputPath())),
+        /* mandatoryOutputs= */ null,
         SpawnAction.DEFAULT_RESOURCE_SET);
   }
 
@@ -687,6 +688,22 @@ public class StandaloneTestStrategy extends TestStrategy {
     }
     long endTimeMillis = actionExecutionContext.getClock().currentTimeMillis();
 
+    // Check TEST_PREMATURE_EXIT_FILE file (and always delete it)
+    if (actionExecutionContext
+            .getPathResolver()
+            .convertPath(resolvedPaths.getExitSafeFile())
+            .delete()
+        && testResultDataBuilder.getTestPassed()) {
+      testResultDataBuilder
+          .setCachable(false)
+          .setTestPassed(false)
+          .setStatus(BlazeTestStatus.FAILED);
+      fileOutErr
+          .getErrorStream()
+          .write(
+              "-- Test exited prematurely (TEST_PREMATURE_EXIT_FILE exists) --\n".getBytes(UTF_8));
+    }
+
     // Do not override a more informative test failure with a generic failure due to the missing
     // shard file, which may have been caused by the test failing before the runner had a chance to
     // touch the file
@@ -747,8 +764,8 @@ public class StandaloneTestStrategy extends TestStrategy {
       ImmutableSet<? extends ActionInput> expandedCoverageDir =
           actionExecutionContext
               .getOutputMetadataStore()
-              .getTreeArtifactChildren(
-                  (SpecialArtifact) testAction.getCoverageDirectoryTreeArtifact());
+              .getTreeArtifactValue((SpecialArtifact) testAction.getCoverageDirectoryTreeArtifact())
+              .getChildren();
       ImmutableSet<ActionInput> coverageSpawnMetadata =
           ImmutableSet.<ActionInput>builder()
               .addAll(expandedCoverageDir)

@@ -50,11 +50,6 @@ msys*|mingw*|cygwin*)
   ;;
 esac
 
-if "$is_windows"; then
-  export MSYS_NO_PATHCONV=1
-  export MSYS2_ARG_CONV_EXCL="*"
-fi
-
 add_to_bazelrc "build --experimental_enable_skyfocus"
 add_to_bazelrc "build --genrule_strategy=local"
 add_to_bazelrc "test --test_strategy=standalone"
@@ -358,7 +353,7 @@ EOF
   # Change the configuration dep, and rely on bazel's configuration invalidation
   # mechanism to rebuild the graph.
   bazel build //${pkg}:my_rule --//${pkg}:my_label_build_setting=//${pkg}:command_line \
-    --experimental_skyfocus_handling_strategy=warn \
+    --experimental_frontier_violation_check=warn \
     &> "$TEST_log" || fail "expected build to succeed"
 
   # Analysis cache should be dropped due to the changed configuration.

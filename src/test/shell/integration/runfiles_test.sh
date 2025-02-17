@@ -57,8 +57,6 @@ esac
 # counts and manifest checks in test_foo_runfiles.
 # TODO(#8169): Update this test and remove the toolchain opt-out.
 if "$is_windows"; then
-  export MSYS_NO_PATHCONV=1
-  export MSYS2_ARG_CONV_EXCL="*"
   export EXT=".exe"
   export EXTRA_STARTUP_FLAGS="--windows_enable_symlinks"
   export EXTRA_BUILD_FLAGS="--incompatible_use_python_toolchains=false \
@@ -377,35 +375,10 @@ EOF
   diff -u ${TEST_TMPDIR}/MANIFEST_sorted ${TEST_TMPDIR}/MANIFEST2_sorted
 }
 
-function test_workspace_name_change() {
-  # TODO(b/174761497): Re-enable the test outside of Bazel.
-  [[ "${PRODUCT_NAME}" != bazel ]] && return 0
-
-  echo 'workspace(name = "foo")' > WORKSPACE
-
-  cat > BUILD <<EOF
-cc_binary(
-    name = "thing",
-    srcs = ["thing.cc"],
-    data = ["BUILD"],
-)
-EOF
-  cat > thing.cc <<EOF
-int main() { return 0; }
-EOF
-  bazel $EXTRA_STARTUP_FLAGS build --noenable_bzlmod --enable_workspace //:thing $EXTRA_BUILD_FLAGS &> $TEST_log || fail "Build failed"
-  [[ -d ${PRODUCT_NAME}-bin/thing${EXT}.runfiles/foo ]] || fail "foo not found"
-
-  # Change workspace name to bar.
-  sed -ie 's,workspace(.*,workspace(name = "bar"),' WORKSPACE
-  bazel $EXTRA_STARTUP_FLAGS build --noenable_bzlmod --enable_workspace //:thing $EXTRA_BUILD_FLAGS &> $TEST_log || fail "Build failed"
-  [[ -d ${PRODUCT_NAME}-bin/thing${EXT}.runfiles/bar ]] || fail "bar not found"
-  [[ ! -d ${PRODUCT_NAME}-bin/thing${EXT}.runfiles/foo ]] \
-    || fail "Old foo still found"
-}
-
 # regression test for b/237547165
-function test_fail_on_middleman_in_transitive_runfiles_for_executable() {
+function test_fail_on_runfiles_tree_in_transitive_runfiles_for_executable() {
+  local exit_code
+
   cat > rule.bzl <<EOF
 def _impl(ctx):
     exe = ctx.actions.declare_file(ctx.label.name + '.out')
@@ -430,8 +403,11 @@ EOF
   cat > thing.cc <<EOF
 int main() { return 0; }
 EOF
-  bazel build //:test &> $TEST_log && fail "Expected build to fail but it succeeded"
-  expect_log_once "Runfiles must not contain middleman artifacts"
+  bazel build //:test &> $TEST_log || exit_code=$?
+  if [[ $exit_code -ne 1 ]]; then
+    fail "Expected regular build failure but instead got exit code $exit_code"
+  fi
+  expect_log_once "Runfiles must not contain runfiles tree artifacts"
 }
 
 function test_manifest_action_reruns_on_output_base_change() {
@@ -569,6 +545,272 @@ EOF
   inplace-sed 's/link_one/link_two/' a/BUILD
   bazel build //a:g || fail "first build failed"
   assert_contains '/link_two$' *-bin/a/go
+}
+
+function setup_special_chars_in_runfiles_source_paths() {
+  mkdir -p pkg
+  if "$is_windows"; then
+    cat > pkg/constants.bzl <<'EOF'
+NAME = "pkg/a b .txt"
+EOF
+  else
+    cat > pkg/constants.bzl <<'EOF'
+NAME = "pkg/a \n \\ b .txt"
+EOF
+  fi
+  cat > pkg/defs.bzl <<'EOF'
+load(":constants.bzl", "NAME")
+def _special_chars_impl(ctx):
+    out = ctx.actions.declare_file("data.txt")
+    ctx.actions.write(out, "my content")
+    runfiles = ctx.runfiles(
+        symlinks = {
+            NAME: out,
+        },
+    )
+    return [DefaultInfo(files = depset([out]), runfiles = runfiles)]
+
+spaces = rule(
+    implementation = _special_chars_impl,
+)
+EOF
+  cat > pkg/BUILD <<'EOF'
+load(":defs.bzl", "spaces")
+spaces(name = "spaces")
+sh_test(
+    name = "foo",
+    srcs = ["foo.sh"],
+    data = [":spaces"],
+)
+EOF
+  if "$is_windows"; then
+    cat > pkg/foo.sh <<'EOF'
+#!/bin/bash
+if [[ "$(cat $'pkg/a b .txt')" != "my content" ]]; then
+  echo "unexpected content or not found"
+  exit 1
+fi
+EOF
+  else
+    cat > pkg/foo.sh <<'EOF'
+#!/bin/bash
+if [[ "$(cat $'pkg/a \n \\ b .txt')" != "my content" ]]; then
+  echo "unexpected content or not found"
+  exit 1
+fi
+EOF
+  fi
+  chmod +x pkg/foo.sh
+}
+
+function test_special_chars_in_runfiles_source_paths_out_of_process() {
+  setup_special_chars_in_runfiles_source_paths
+  bazel test --noexperimental_inprocess_symlink_creation \
+    --test_output=errors \
+    //pkg:foo $EXTRA_BUILD_FLAGS >&$TEST_log || fail "test failed"
+}
+
+function test_special_chars_in_runfiles_source_paths_in_process() {
+  setup_special_chars_in_runfiles_source_paths
+  bazel test --experimental_inprocess_symlink_creation \
+    --test_output=errors \
+    //pkg:foo $EXTRA_BUILD_FLAGS >&$TEST_log || fail "test failed"
+}
+
+function setup_special_chars_in_runfiles_target_paths() {
+  mkdir -p pkg
+  if "$is_windows"; then
+    cat > pkg/constants.bzl <<'EOF'
+NAME = "pkg/a b .txt"
+EOF
+  else
+    cat > pkg/constants.bzl <<'EOF'
+NAME = "pkg/a \n \\ b .txt"
+EOF
+  fi
+  cat > pkg/defs.bzl <<'EOF'
+load(":constants.bzl", "NAME")
+def _special_chars_impl(ctx):
+    out = ctx.actions.declare_file(NAME)
+    ctx.actions.write(out, "my content")
+    runfiles = ctx.runfiles(
+        symlinks = {
+            "pkg/data.txt": out,
+        },
+    )
+    return [DefaultInfo(files = depset([out]), runfiles = runfiles)]
+
+spaces = rule(
+    implementation = _special_chars_impl,
+)
+EOF
+  cat > pkg/BUILD <<'EOF'
+load(":defs.bzl", "spaces")
+spaces(name = "spaces")
+sh_test(
+    name = "foo",
+    srcs = ["foo.sh"],
+    data = [":spaces"],
+)
+EOF
+  cat > pkg/foo.sh <<'EOF'
+#!/bin/bash
+if [[ "$(cat pkg/data.txt)" != "my content" ]]; then
+  echo "unexpected content or not found"
+  exit 1
+fi
+EOF
+  chmod +x pkg/foo.sh
+}
+
+function test_special_chars_in_runfiles_target_paths_out_of_process() {
+  setup_special_chars_in_runfiles_target_paths
+  bazel test --noexperimental_inprocess_symlink_creation \
+    --test_output=errors \
+    //pkg:foo $EXTRA_BUILD_FLAGS >&$TEST_log || fail "test failed"
+}
+
+function test_special_chars_in_runfiles_target_paths_in_process() {
+  setup_special_chars_in_runfiles_target_paths
+  bazel test --experimental_inprocess_symlink_creation \
+    --test_output=errors \
+    //pkg:foo $EXTRA_BUILD_FLAGS >&$TEST_log || fail "test failed"
+}
+
+function setup_special_chars_in_runfiles_source_and_target_paths() {
+  mkdir -p pkg
+  if "$is_windows"; then
+    cat > pkg/constants.bzl <<'EOF'
+NAME = "a b .txt"
+EOF
+  else
+    cat > pkg/constants.bzl <<'EOF'
+NAME = "a \n \\ b .txt"
+EOF
+  fi
+  cat > pkg/defs.bzl <<'EOF'
+load(":constants.bzl", "NAME")
+def _special_chars_impl(ctx):
+    out = ctx.actions.declare_file(NAME)
+    ctx.actions.write(out, "my content")
+    return [DefaultInfo(files = depset([out]))]
+
+spaces = rule(
+    implementation = _special_chars_impl,
+)
+EOF
+  cat > pkg/BUILD <<'EOF'
+load(":defs.bzl", "spaces")
+spaces(name = "spaces")
+sh_test(
+    name = "foo",
+    srcs = ["foo.sh"],
+    data = [":spaces"],
+)
+EOF
+  if "$is_windows"; then
+    cat > pkg/foo.sh <<'EOF'
+#!/bin/bash
+if [[ "$(cat $'pkg/a b .txt')" != "my content" ]]; then
+  echo "unexpected content or not found"
+  exit 1
+fi
+EOF
+  else
+    cat > pkg/foo.sh <<'EOF'
+#!/bin/bash
+if [[ "$(cat $'pkg/a \n \\ b .txt')" != "my content" ]]; then
+  echo "unexpected content or not found"
+  exit 1
+fi
+EOF
+  fi
+  chmod +x pkg/foo.sh
+}
+
+function test_special_chars_in_runfiles_source_and_target_paths_out_of_process() {
+  setup_special_chars_in_runfiles_source_and_target_paths
+  bazel test --noexperimental_inprocess_symlink_creation \
+    --test_output=errors \
+    //pkg:foo $EXTRA_BUILD_FLAGS >&$TEST_log || fail "test failed"
+}
+
+function test_special_chars_in_runfiles_source_and_target_paths_in_process() {
+  setup_special_chars_in_runfiles_source_and_target_paths
+  bazel test --experimental_inprocess_symlink_creation \
+    --test_output=errors \
+    //pkg:foo $EXTRA_BUILD_FLAGS >&$TEST_log || fail "test failed"
+}
+
+# Verify that Bazel's runfiles manifest is compatible with v3 of the Bash
+# runfiles library snippet, even if the workspace path contains a space and
+# a backslash.
+function test_compatibility_with_bash_runfiles_library_snippet() {
+  if [[ "${PRODUCT_NAME}" != "bazel" ]]; then
+    # This test is only relevant for Bazel.
+    return
+  fi
+  # Create a workspace path with a space.
+  WORKSPACE="$(mktemp -d jar_manifest.XXXXXXXX)/my w\orkspace"
+  trap "rm -fr '$WORKSPACE'" EXIT
+  mkdir -p "$WORKSPACE"
+  cd "$WORKSPACE" || fail "failed to cd to $WORKSPACE"
+  cat > MODULE.bazel <<'EOF'
+module(name = "my_module")
+EOF
+
+  mkdir pkg
+  cat > pkg/BUILD <<'EOF'
+sh_binary(
+    name = "tool",
+    srcs = ["tool.sh"],
+    deps = ["@bazel_tools//tools/bash/runfiles"],
+)
+
+genrule(
+    name = "gen",
+    outs = ["out"],
+    tools = [":tool"],
+    cmd = "$(execpath :tool) $@",
+)
+EOF
+  cat > pkg/tool.sh <<'EOF'
+#!/bin/bash
+# --- begin runfiles.bash initialization v3 ---
+# Copy-pasted from the Bazel Bash runfiles library v3.
+set -uo pipefail; set +e; f=bazel_tools/tools/bash/runfiles/runfiles.bash
+# shellcheck disable=SC1090
+source "${RUNFILES_DIR:-/dev/null}/$f" 2>/dev/null || \
+  source "$(grep -sm1 "^$f " "${RUNFILES_MANIFEST_FILE:-/dev/null}" | cut -f2- -d' ')" 2>/dev/null || \
+  source "$0.runfiles/$f" 2>/dev/null || \
+  source "$(grep -sm1 "^$f " "$0.runfiles_manifest" | cut -f2- -d' ')" 2>/dev/null || \
+  source "$(grep -sm1 "^$f " "$0.exe.runfiles_manifest" | cut -f2- -d' ')" 2>/dev/null || \
+  { echo>&2 "ERROR: cannot find $f"; exit 1; }; f=; set -e
+# --- end runfiles.bash initialization v3 ---
+
+if [[ ! -z "${RUNFILES_DIR+x}" ]]; then
+  echo "RUNFILES_DIR is set"
+  exit 1
+fi
+
+if [[ -z "${RUNFILES_MANIFEST_FILE+x}" ]]; then
+  echo "RUNFILES_MANIFEST_FILE is not set"
+  exit 1
+fi
+
+if [[ -z "$(rlocation "my_module/pkg/tool.sh")" ]]; then
+  echo "rlocation failed"
+  exit 1
+fi
+
+touch $1
+EOF
+  chmod +x pkg/tool.sh
+
+  bazel build --noenable_runfiles \
+    --spawn_strategy=local \
+    --action_env=RUNFILES_LIB_DEBUG=1 \
+    //pkg:gen >&$TEST_log || fail "build failed"
 }
 
 run_suite "runfiles"

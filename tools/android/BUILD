@@ -3,17 +3,6 @@ load("@rules_python//python:defs.bzl", "py_binary", "py_test")
 package(default_visibility = ["//tools:__pkg__"])
 
 py_binary(
-    name = "resource_extractor",
-    srcs = ["resource_extractor.py"],
-)
-
-py_test(
-    name = "resource_extractor_test",
-    srcs = ["resource_extractor_test.py"],
-    deps = [":resource_extractor"],
-)
-
-py_binary(
     name = "instrumentation_test_check",
     srcs = ["instrumentation_test_check.py"],
     python_version = "PY3",
@@ -35,24 +24,14 @@ filegroup(
             "*~",
             ".*",
         ],
-    ) + [
-        "//tools/android/emulator:srcs",
-        "//tools/android/runtime_deps:srcs",
-    ],
+    ),
 )
 
 filegroup(
     name = "embedded_tools",
-    srcs = glob(
-        ["*"],
-        exclude = [
-            "*_test.py",
-            "*_test.sh",
-            "*~",
-            ".*",
-        ],
-    ) + [
-        "//tools/android/emulator:embedded_tools",
+    srcs = [
+        "BUILD.tools",
+        "android_extensions.bzl",
     ],
 )
 
@@ -64,6 +43,3 @@ platform(
     ],
     visibility = ["//visibility:public"],
 )
-
-# Exported for AndroidSdkRepositoryTest to use it instead of mocking it out.
-exports_files(["android_sdk_repository_template.bzl"])

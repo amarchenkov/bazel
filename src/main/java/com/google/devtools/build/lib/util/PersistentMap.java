@@ -196,6 +196,16 @@ public abstract class PersistentMap<K, V> extends ForwardingConcurrentMap<K, V> 
     return previous;
   }
 
+  @Override
+  public V replace(K key, V value) {
+    throw new UnsupportedOperationException();
+  }
+
+  @Override
+  public boolean replace(K key, V oldValue, V newValue) {
+    throw new UnsupportedOperationException();
+  }
+
   /**
    * Updates the persistent journal by writing all entries to the {@link #journalOut} stream and
    * clearing the in memory journal.
@@ -232,22 +242,15 @@ public abstract class PersistentMap<K, V> extends ForwardingConcurrentMap<K, V> 
   /**
    * Loads the previous written map entries from disk.
    *
-   * @param failFast if true, throw IOException rather than silently ignoring.
-   * @throws IOException
+   * @param failFast whether to throw an IOException if an error occurs, including a version
+   *     mismatch or corrupted file contents; otherwise, the error is suppressed and the remainder
+   *     of the file is ignored, resulting in a valid but potentially incomplete map.
    */
   public synchronized void load(boolean failFast) throws IOException {
     if (!loaded) {
       loadEntries(mapFile, failFast);
       if (journalFile.exists()) {
-        try {
-          loadEntries(journalFile, failFast);
-        } catch (IOException e) {
-          if (failFast) {
-            throw e;
-          }
-          //Else: ignore any errors reading the journal file as it may contain
-          //partial entries.
-        }
+        loadEntries(journalFile, failFast);
         // Force the map to be dirty, so that we can save it to disk.
         dirty = true;
         save(/*fullSave=*/ true);
@@ -381,13 +384,15 @@ public abstract class PersistentMap<K, V> extends ForwardingConcurrentMap<K, V> 
     try {
       if (in.readLong() != MAGIC) { // not a PersistentMap
         if (failFast) {
-          throw new IOException("Unexpected format");
+          throw new IOException("Bad magic number");
         }
         return;
       }
-      if (in.readLong() != version) { // PersistentMap version incompatible
+      long persistedVersion = in.readLong();
+      if (persistedVersion != version) { // PersistentMap version incompatible
         if (failFast) {
-          throw new IOException("Unexpected format");
+          throw new IOException(
+              "Incompatible version: want %d, got %d".formatted(version, persistedVersion));
         }
         return;
       }
@@ -444,8 +449,9 @@ public abstract class PersistentMap<K, V> extends ForwardingConcurrentMap<K, V> 
   /**
    * Reads the Map entries from the specified DataInputStream.
    *
-   * @param failFast if true, throw IOException if entries are in an unexpected
-   *                 format.
+   * @param failFast whether to throw an IOException if an error occurs, including a corrupted
+   *     entry; otherwise, the error is suppressed and the remainder of the file is ignored,
+   *     resulting in a valid but potentially incomplete map.
    * @param in the DataInputStream to read the Map entries from.
    * @throws IOException
    */

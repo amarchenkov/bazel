@@ -14,12 +14,16 @@
 package com.google.devtools.build.lib.starlarkdocextract;
 
 import static com.google.common.truth.Truth.assertThat;
+import static com.google.common.truth.Truth.assertWithMessage;
 import static com.google.devtools.build.lib.packages.Attribute.attr;
 import static com.google.devtools.build.lib.packages.Types.STRING_LIST;
 
-import com.google.common.collect.ImmutableMap;
+import com.google.devtools.build.lib.packages.BuildTypeTestHelper;
 import com.google.devtools.build.lib.packages.RuleClass;
+import com.google.devtools.build.lib.packages.Type;
 import com.google.devtools.build.lib.packages.util.PackageLoadingTestCase;
+import com.google.devtools.build.lib.starlarkdocextract.StardocOutputProtos.AttributeInfo;
+import com.google.devtools.build.lib.starlarkdocextract.StardocOutputProtos.AttributeType;
 import com.google.devtools.build.lib.starlarkdocextract.StardocOutputProtos.OriginKey;
 import com.google.devtools.build.lib.starlarkdocextract.StardocOutputProtos.RuleInfo;
 import org.junit.Test;
@@ -46,7 +50,10 @@ public final class RuleInfoExtractorTest extends PackageLoadingTestCase {
             .add(attr("tags", STRING_LIST))
             .build();
     ExtractorContext extractorContext =
-        new ExtractorContext(LabelRenderer.DEFAULT, ImmutableMap.of());
+        ExtractorContext.builder()
+            .labelRenderer(LabelRenderer.DEFAULT)
+            .extractNativelyDefinedAttrs(true)
+            .build();
     RuleInfo ruleInfo =
         RuleInfoExtractor.buildRuleInfo(extractorContext, "namespace.test_rule", ruleClass);
     assertThat(ruleInfo)
@@ -54,19 +61,53 @@ public final class RuleInfoExtractorTest extends PackageLoadingTestCase {
             RuleInfo.newBuilder()
                 .setRuleName("namespace.test_rule")
                 .setOriginKey(OriginKey.newBuilder().setName("test_rule").setFile("<native>"))
-                .addAttribute(AttributeInfoExtractor.IMPLICIT_NAME_ATTRIBUTE_INFO)
-                // TODO(b/78473365): emit docs for non-Starlark-defined attrs (like "tags" here)
+                .addAllAttribute(RuleInfoExtractor.IMPLICIT_RULE_ATTRIBUTES.values())
+                .addAttribute(
+                    AttributeInfo.newBuilder()
+                        .setName("tags")
+                        .setType(AttributeType.STRING_LIST)
+                        .setDefaultValue("[]")
+                        .setMandatory(false)
+                        .setNativelyDefined(true)
+                        .build())
                 .build());
   }
 
   @Test
-  public void allStandardRulesAreSupported() throws Exception {
+  public void allBuiltinAttributeTypesSupported() throws Exception {
+    ExtractorContext context =
+        ExtractorContext.builder().labelRenderer(LabelRenderer.DEFAULT).build();
+    for (Type<?> type : BuildTypeTestHelper.getAllBuildTypes(/* publicOnly= */ true)) {
+      assertWithMessage("attr type '%s'", type)
+          .that(AttributeInfoExtractor.getAttributeType(context, type, "test_attr"))
+          .isNotEqualTo(AttributeType.UNKNOWN);
+    }
+  }
+
+  @Test
+  public void allNativeRulesAreSupported() throws Exception {
     ExtractorContext extractorContext =
-        new ExtractorContext(LabelRenderer.DEFAULT, ImmutableMap.of());
+        ExtractorContext.builder()
+            .labelRenderer(LabelRenderer.DEFAULT)
+            .extractNativelyDefinedAttrs(true)
+            .build();
     for (RuleClass ruleClass : ruleClassProvider.getRuleClassMap().values()) {
       RuleInfo ruleInfo =
           RuleInfoExtractor.buildRuleInfo(extractorContext, ruleClass.getName(), ruleClass);
       assertThat(ruleInfo.getRuleName()).isEqualTo(ruleClass.getName());
+      assertThat(ruleInfo.getOriginKey().getName()).isEqualTo(ruleClass.getName());
+      assertWithMessage("rule '%s'", ruleClass.getName())
+          .that(ruleInfo.getOriginKey().getFile())
+          .isEqualTo("<native>");
+      assertWithMessage("rule '%s'", ruleClass.getName())
+          .that(ruleInfo.getAttributeList().getFirst())
+          .isEqualTo(RuleInfoExtractor.IMPLICIT_RULE_ATTRIBUTES.get("name"));
+      assertWithMessage("rule '%s'", ruleClass.getName())
+          .that(ruleInfo.getAttributeList().stream().map(AttributeInfo::getName))
+          .containsNoDuplicates();
+      assertWithMessage("rule '%s'", ruleClass.getName())
+          .that(ruleInfo.getAttributeList().stream().map(AttributeInfo::getDefaultValue))
+          .doesNotContain(AttributeInfoExtractor.UNREPRESENTABLE_VALUE);
     }
   }
 }

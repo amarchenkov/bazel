@@ -49,7 +49,8 @@ public class CommandFailureUtils {
       @Nullable List<String> environmentVariablesToClear,
       @Nullable String cwd,
       @Nullable String configurationChecksum,
-      @Nullable Label executionPlatformLabel) {
+      @Nullable Label executionPlatformLabel,
+      @Nullable String spawnRunner) {
 
     Preconditions.checkNotNull(form);
     StringBuilder message = new StringBuilder();
@@ -134,6 +135,11 @@ public class CommandFailureUtils {
         message.append("\n");
         message.append("# Execution platform: ").append(executionPlatformLabel);
       }
+
+      if (spawnRunner != null) {
+        message.append("\n");
+        message.append("# Runner: ").append(spawnRunner);
+      }
     }
 
     return message.toString();
@@ -151,8 +157,9 @@ public class CommandFailureUtils {
       Map<String, String> env,
       @Nullable String cwd,
       @Nullable String configurationChecksum,
-      @Nullable Label targetLabel,
-      @Nullable Label executionPlatformLabel) {
+      @Nullable String targetDescription,
+      @Nullable Label executionPlatformLabel,
+      @Nullable String spawnRunner) {
 
     String commandName = commandLineElements.iterator().next();
     // Extract the part of the command name after the last "/", if any.
@@ -166,8 +173,8 @@ public class CommandFailureUtils {
     output.append("error executing ");
     output.append(mnemonic);
     output.append(" command ");
-    if (targetLabel != null) {
-      output.append("(from target ").append(targetLabel).append(") ");
+    if (targetDescription != null) {
+      output.append("(from ").append(targetDescription).append(") ");
     }
     if (verbose) {
       output.append("\n  ");
@@ -181,7 +188,8 @@ public class CommandFailureUtils {
             null,
             cwd,
             configurationChecksum,
-            executionPlatformLabel));
+            executionPlatformLabel,
+            spawnRunner));
     return shortCommandName + " failed: " + output;
   }
 
@@ -194,7 +202,8 @@ public class CommandFailureUtils {
         command.getEnvironment(),
         cwd,
         command.getConfigurationChecksum(),
-        command.getTargetLabel(),
-        command.getExecutionPlatformLabel());
+        command.getTargetDescription(),
+        command.getExecutionPlatformLabel(),
+        /* spawnRunner= */ null);
   }
 }

@@ -16,9 +16,9 @@ package com.google.devtools.build.lib.skyframe;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
+import static java.util.Objects.requireNonNull;
 import static java.util.concurrent.TimeUnit.MINUTES;
 
-import com.google.auto.value.AutoValue;
 import com.google.common.base.MoreObjects;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
@@ -26,7 +26,6 @@ import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Sets;
 import com.google.common.flogger.GoogleLogger;
-import com.google.common.io.BaseEncoding;
 import com.google.devtools.build.lib.actions.ActionInput;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.actions.Artifact.ArchivedTreeArtifact;
@@ -34,7 +33,6 @@ import com.google.devtools.build.lib.actions.Artifact.SpecialArtifact;
 import com.google.devtools.build.lib.actions.Artifact.TreeFileArtifact;
 import com.google.devtools.build.lib.actions.ArtifactPathResolver;
 import com.google.devtools.build.lib.actions.FileArtifactValue;
-import com.google.devtools.build.lib.actions.FileArtifactValue.RemoteFileArtifactValue;
 import com.google.devtools.build.lib.actions.FileStateType;
 import com.google.devtools.build.lib.actions.FileStateValue;
 import com.google.devtools.build.lib.actions.FileStatusWithMetadata;
@@ -68,7 +66,7 @@ import javax.annotation.Nullable;
  * metadata while {@link com.google.devtools.build.lib.actions.ActionCacheChecker} determines
  * whether the action needs to be executed. If the action needs to be executed (i.e. no action cache
  * hit), {@link #prepareForActionExecution} is called. This call switches the handler to a mode
- * where it accepts {@linkplain com.google.devtools.build.lib.actions.cache.MetadataInjector
+ * where it accepts {@linkplain com.google.devtools.build.lib.actions.cache.OutputMetadataStore
  * injected output data}, or otherwise obtains metadata from the filesystem. Freshly created output
  * files are set read-only and executable <em>before</em> statting them to ensure that the stat's
  * ctime is up to date.
@@ -87,16 +85,14 @@ final class ActionOutputMetadataStore implements OutputMetadataStore {
       ImmutableSet<Artifact> outputs,
       XattrProvider xattrProvider,
       TimestampGranularityMonitor tsgm,
-      ArtifactPathResolver artifactPathResolver,
-      PathFragment execRoot) {
+      ArtifactPathResolver artifactPathResolver) {
     return new ActionOutputMetadataStore(
         archivedTreeArtifactsEnabled,
         outputPermissions,
         outputs,
         xattrProvider,
         tsgm,
-        artifactPathResolver,
-        execRoot);
+        artifactPathResolver);
   }
 
   private final boolean archivedTreeArtifactsEnabled;
@@ -105,7 +101,6 @@ final class ActionOutputMetadataStore implements OutputMetadataStore {
   private final XattrProvider xattrProvider;
   private final TimestampGranularityMonitor tsgm;
   private final ArtifactPathResolver artifactPathResolver;
-  private final PathFragment execRoot;
 
   private final AtomicBoolean executionMode = new AtomicBoolean(false);
 
@@ -121,15 +116,13 @@ final class ActionOutputMetadataStore implements OutputMetadataStore {
       ImmutableSet<Artifact> outputs,
       XattrProvider xattrProvider,
       TimestampGranularityMonitor tsgm,
-      ArtifactPathResolver artifactPathResolver,
-      PathFragment execRoot) {
+      ArtifactPathResolver artifactPathResolver) {
     this.archivedTreeArtifactsEnabled = archivedTreeArtifactsEnabled;
     this.outputPermissions = outputPermissions;
     this.outputs = checkNotNull(outputs);
     this.xattrProvider = xattrProvider;
     this.tsgm = checkNotNull(tsgm);
     this.artifactPathResolver = checkNotNull(artifactPathResolver);
-    this.execRoot = checkNotNull(execRoot);
   }
 
   private void putArtifactData(Artifact artifact, FileArtifactValue value) {
@@ -158,8 +151,7 @@ final class ActionOutputMetadataStore implements OutputMetadataStore {
    */
   private static FileArtifactValue checkExists(FileArtifactValue value, Artifact artifact)
       throws FileNotFoundException {
-    if (FileArtifactValue.MISSING_FILE_MARKER.equals(value)
-        || FileArtifactValue.OMITTED_FILE_MARKER.equals(value)) {
+    if (FileArtifactValue.MISSING_FILE_MARKER.equals(value)) {
       throw new FileNotFoundException(artifact + " does not exist");
     }
     return checkNotNull(value, artifact);
@@ -171,8 +163,7 @@ final class ActionOutputMetadataStore implements OutputMetadataStore {
    */
   private static TreeArtifactValue checkExists(TreeArtifactValue value, Artifact artifact)
       throws FileNotFoundException {
-    if (TreeArtifactValue.MISSING_TREE_ARTIFACT.equals(value)
-        || TreeArtifactValue.OMITTED_TREE_MARKER.equals(value)) {
+    if (TreeArtifactValue.MISSING_TREE_ARTIFACT.equals(value)) {
       throw new FileNotFoundException(artifact + " does not exist");
     }
     return checkNotNull(value, artifact);
@@ -194,15 +185,14 @@ final class ActionOutputMetadataStore implements OutputMetadataStore {
       return null;
     }
 
-    if (artifact.isMiddlemanArtifact()) {
-      // A middleman artifact's data was either already injected from the action cache checker using
-      // #setDigestForVirtualArtifact, or it has the default middleman value.
+    if (artifact.isRunfilesTree()) {
+      // Runfiles trees get a placeholder value, see the Javadoc of RUNFILES_TREE_MARKER as to why
       value = artifactData.get(artifact);
       if (value != null) {
         return checkExists(value, artifact);
       }
-      putArtifactData(artifact, FileArtifactValue.DEFAULT_MIDDLEMAN);
-      return FileArtifactValue.DEFAULT_MIDDLEMAN;
+      putArtifactData(artifact, FileArtifactValue.RUNFILES_TREE_MARKER);
+      return FileArtifactValue.RUNFILES_TREE_MARKER;
     }
 
     if (artifact.isTreeArtifact()) {
@@ -235,13 +225,6 @@ final class ActionOutputMetadataStore implements OutputMetadataStore {
     value = constructFileArtifactValueFromFilesystem(artifact);
     putArtifactData(artifact, value);
     return checkExists(value, artifact);
-  }
-
-  @Override
-  public void setDigestForVirtualArtifact(Artifact artifact, byte[] digest) {
-    checkArgument(artifact.isMiddlemanArtifact(), artifact);
-    checkNotNull(digest, artifact);
-    putArtifactData(artifact, FileArtifactValue.createProxy(digest));
   }
 
   @Override
@@ -312,45 +295,29 @@ final class ActionOutputMetadataStore implements OutputMetadataStore {
             archivedTreeArtifact,
             constructFileArtifactValue(
                 archivedTreeArtifact,
-                FileStatusWithDigestAdapter.maybeAdapt(archivedStatNoFollow),
-                /* injectedDigest= */ null));
+                FileStatusWithDigestAdapter.maybeAdapt(archivedStatNoFollow)));
       } else {
         logger.atInfo().atMostEvery(5, MINUTES).log(
             "Archived tree artifact: %s not created", archivedTreeArtifact);
       }
     }
 
-    // Same rationale as for constructFileArtifactValue.
-    if (anyRemote.get() && treeDir.isSymbolicLink() && stat instanceof FileStatusWithMetadata) {
-      FileArtifactValue metadata = ((FileStatusWithMetadata) stat).getMetadata();
-      tree.setMaterializationExecPath(
-          metadata
-              .getMaterializationExecPath()
-              .orElse(treeDir.resolveSymbolicLinks().asFragment().relativeTo(execRoot)));
+    // If the artifact was materialized in the filesystem as as symlink to another artifact, record
+    // the real path in the metadata so that it can be recreated as such later.
+    // See {@link FileArtifactValue#getResolvedPath} for why this is useful.
+    // TODO(tjgq): Actually check whether the path matches one of the action inputs. The presence
+    // of a FileStatusWithMetadata happens to coincide, but seems a little brittle.
+    if (stat instanceof FileStatusWithMetadata statWithMetadata && treeDir.isSymbolicLink()) {
+      FileArtifactValue metadata = statWithMetadata.getMetadata();
+      PathFragment resolvedPath = metadata.getResolvedPath();
+      if (resolvedPath != null) {
+        tree.setResolvedPath(resolvedPath);
+      } else {
+        tree.setResolvedPath(treeDir.resolveSymbolicLinks().asFragment());
+      }
     }
 
     return tree.build();
-  }
-
-  @Override
-  public ImmutableSet<TreeFileArtifact> getTreeArtifactChildren(SpecialArtifact treeArtifact) {
-    checkArgument(treeArtifact.isTreeArtifact(), "%s is not a tree artifact", treeArtifact);
-    TreeArtifactValue tree = treeArtifactData.get(treeArtifact);
-    return tree != null ? tree.getChildren() : ImmutableSet.of();
-  }
-
-  @Override
-  public FileArtifactValue constructMetadataForDigest(
-      Artifact output, FileStatus statNoFollow, byte[] digest) throws IOException {
-    checkArgument(!output.isSymlink(), "%s is a symlink", output);
-    checkNotNull(digest, "Missing digest for %s", output);
-    checkNotNull(statNoFollow, "Missing stat for %s", output);
-    checkState(
-        executionMode.get(), "Tried to construct metadata for %s outside of execution", output);
-
-    // We already have a stat, so no need to call chmod.
-    return constructFileArtifactValue(
-        output, FileStatusWithDigestAdapter.maybeAdapt(statNoFollow), digest);
   }
 
   @Override
@@ -380,17 +347,7 @@ final class ActionOutputMetadataStore implements OutputMetadataStore {
   @Override
   public void markOmitted(Artifact output) {
     checkState(executionMode.get(), "Tried to mark %s omitted outside of execution", output);
-    boolean newlyOmitted = omittedOutputs.add(output);
-    if (output.isTreeArtifact()) {
-      // Tolerate marking a tree artifact as omitted multiple times so that callers don't have to
-      // deduplicate when a tree artifact has several omitted children.
-      if (newlyOmitted) {
-        treeArtifactData.put((SpecialArtifact) output, TreeArtifactValue.OMITTED_TREE_MARKER);
-      }
-    } else {
-      checkState(newlyOmitted, "%s marked as omitted twice", output);
-      putArtifactData(output, FileArtifactValue.OMITTED_FILE_MARKER);
-    }
+    omittedOutputs.add(output);
   }
 
   @Override
@@ -435,15 +392,12 @@ final class ActionOutputMetadataStore implements OutputMetadataStore {
   /** Constructs a new {@link FileArtifactValue} by reading from the file system. */
   private FileArtifactValue constructFileArtifactValueFromFilesystem(Artifact artifact)
       throws IOException {
-    return constructFileArtifactValue(artifact, /*statNoFollow=*/ null, /*injectedDigest=*/ null);
+    return constructFileArtifactValue(artifact, /* statNoFollow= */ null);
   }
 
-  /** Constructs a new {@link FileArtifactValue}, optionally taking a known stat and digest. */
+  /** Constructs a new {@link FileArtifactValue}, optionally taking a known stat. */
   private FileArtifactValue constructFileArtifactValue(
-      Artifact artifact,
-      @Nullable FileStatusWithDigest statNoFollow,
-      @Nullable byte[] injectedDigest)
-      throws IOException {
+      Artifact artifact, @Nullable FileStatusWithDigest statNoFollow) throws IOException {
     checkState(!artifact.isTreeArtifact(), "%s is a tree artifact", artifact);
 
     var statAndValue =
@@ -451,38 +405,14 @@ final class ActionOutputMetadataStore implements OutputMetadataStore {
             artifact,
             artifactPathResolver,
             statNoFollow,
-            injectedDigest != null,
             xattrProvider,
             // Prevent constant metadata artifacts from notifying the timestamp granularity monitor
             // and potentially delaying the build for no reason.
             artifact.isConstantMetadata() ? null : tsgm);
     var value = statAndValue.fileArtifactValue();
 
-    // If the artifact is stored remotely but it was materialized in the filesystem as a symlink,
-    // store the original path in the metadata so it can later be recreated as such to avoid
-    // downloading multiple copies.
-    //
-    // This only affects Bazel when building without the bytes. In Blaze, without an action
-    // filesystem, metadata is always local (isRemote() is false); and with an action filesystem,
-    // createSymbolicLink() is implemented as a file copy (isSymbolicLink() is false).
-    if (value.isRemote() && statAndValue.statNoFollow().isSymbolicLink()) {
-      value =
-          RemoteFileArtifactValue.createFromExistingWithMaterializationPath(
-              (RemoteFileArtifactValue) value,
-              statAndValue.realPath().asFragment().relativeTo(execRoot));
-    }
-
     // Ensure that we don't have both an injected digest and a digest from the filesystem.
     byte[] fileDigest = value.getDigest();
-    if (fileDigest != null && injectedDigest != null) {
-      throw new IllegalStateException(
-          String.format(
-              "Digest %s was injected for artifact %s, but got %s from the filesystem (%s)",
-              BaseEncoding.base16().encode(injectedDigest),
-              artifact,
-              BaseEncoding.base16().encode(fileDigest),
-              value));
-    }
 
     FileStateType type = value.getType();
 
@@ -514,7 +444,8 @@ final class ActionOutputMetadataStore implements OutputMetadataStore {
           artifactPathResolver.toPath(artifact).getLastModifiedTime());
     }
 
-    if (injectedDigest == null && type.isFile()) {
+    byte[] digest = null;
+    if (type.isFile()) {
       // We don't have an injected digest and there is no digest in the file value (which attempts a
       // fast digest). Manually compute the digest instead.
       Path path = statAndValue.pathNoFollow();
@@ -527,14 +458,14 @@ final class ActionOutputMetadataStore implements OutputMetadataStore {
         path = statAndValue.realPath();
       }
 
-      injectedDigest = DigestUtils.manuallyComputeDigest(path);
+      digest = DigestUtils.manuallyComputeDigest(path);
     }
-    return FileArtifactValue.createFromInjectedDigest(value, injectedDigest);
+    return FileArtifactValue.createFromInjectedDigest(value, digest);
   }
 
   /**
-   * Constructs a {@link FileArtifactValue} for a regular (non-tree, non-middleman) artifact for the
-   * purpose of determining whether an existing {@link FileArtifactValue} is still valid.
+   * Constructs a {@link FileArtifactValue} for a regular (non-tree, non-runfiles tree) artifact for
+   * the purpose of determining whether an existing {@link FileArtifactValue} is still valid.
    *
    * <p>The returned metadata may be compared with metadata present in an {@link
    * ActionExecutionValue} using {@link FileArtifactValue#couldBeModifiedSince} to check for
@@ -550,7 +481,6 @@ final class ActionOutputMetadataStore implements OutputMetadataStore {
             artifact,
             ArtifactPathResolver.IDENTITY,
             statNoFollow,
-            /* digestWillBeInjected= */ false,
             xattrProvider,
             tsgm)
         .fileArtifactValue();
@@ -560,11 +490,10 @@ final class ActionOutputMetadataStore implements OutputMetadataStore {
       Artifact artifact,
       ArtifactPathResolver artifactPathResolver,
       @Nullable FileStatusWithDigest statNoFollow,
-      boolean digestWillBeInjected,
       XattrProvider xattrProvider,
       @Nullable TimestampGranularityMonitor tsgm)
       throws IOException {
-    checkState(!artifact.isTreeArtifact() && !artifact.isMiddlemanArtifact(), artifact);
+    checkState(!artifact.isTreeArtifact() && !artifact.isRunfilesTree(), artifact);
 
     Path pathNoFollow = artifactPathResolver.toPath(artifact);
     // If we expect a symlink, we can readlink it directly and handle errors appropriately - there
@@ -590,8 +519,7 @@ final class ActionOutputMetadataStore implements OutputMetadataStore {
 
     if (statNoFollow == null || !statNoFollow.isSymbolicLink()) {
       var fileArtifactValue =
-          fileArtifactValueFromStat(
-              rootedPathNoFollow, statNoFollow, digestWillBeInjected, xattrProvider, tsgm);
+          fileArtifactValueFromStat(rootedPathNoFollow, statNoFollow, xattrProvider, tsgm);
       return FileArtifactStatAndValue.create(
           pathNoFollow, /* realPath= */ null, statNoFollow, fileArtifactValue);
     }
@@ -614,37 +542,45 @@ final class ActionOutputMetadataStore implements OutputMetadataStore {
     FileStatus realStat = realRootedPath.asPath().statIfFound(Symlinks.NOFOLLOW);
     FileStatusWithDigest realStatWithDigest = FileStatusWithDigestAdapter.maybeAdapt(realStat);
     var fileArtifactValue =
-        fileArtifactValueFromStat(
-            realRootedPath, realStatWithDigest, digestWillBeInjected, xattrProvider, tsgm);
+        fileArtifactValueFromStat(realRootedPath, realStatWithDigest, xattrProvider, tsgm);
+
+    // If the artifact was materialized in the filesystem as as symlink to another artifact, record
+    // the real path in the metadata so that it can be recreated as such later.
+    // See {@link FileArtifactValue#getResolvedPath} for why this is useful.
+    // TODO(tjgq): Actually check whether the path matches one of the action inputs. The presence
+    // of a FileStatusWithMetadata happens to coincide, but seems a little brittle.
+    if (realStat instanceof FileStatusWithMetadata && fileArtifactValue.getResolvedPath() == null) {
+      fileArtifactValue =
+          FileArtifactValue.createFromExistingWithResolvedPath(
+              fileArtifactValue, realRootedPath.asPath().asFragment());
+    }
+
     return FileArtifactStatAndValue.create(pathNoFollow, realPath, statNoFollow, fileArtifactValue);
   }
 
-  @AutoValue
-  abstract static class FileArtifactStatAndValue {
+  record FileArtifactStatAndValue(
+      Path pathNoFollow,
+      @Nullable Path realPath,
+      @Nullable FileStatusWithDigest statNoFollow,
+      FileArtifactValue fileArtifactValue) {
+    FileArtifactStatAndValue {
+      requireNonNull(pathNoFollow, "pathNoFollow");
+      requireNonNull(fileArtifactValue, "fileArtifactValue");
+    }
+
     public static FileArtifactStatAndValue create(
         Path pathNoFollow,
         @Nullable Path realPath,
         @Nullable FileStatusWithDigest statNoFollow,
         FileArtifactValue fileArtifactValue) {
-      return new AutoValue_ActionOutputMetadataStore_FileArtifactStatAndValue(
-          pathNoFollow, realPath, statNoFollow, fileArtifactValue);
+      return new FileArtifactStatAndValue(pathNoFollow, realPath, statNoFollow, fileArtifactValue);
     }
 
-    public abstract Path pathNoFollow();
-
-    @Nullable
-    public abstract Path realPath();
-
-    @Nullable
-    public abstract FileStatusWithDigest statNoFollow();
-
-    public abstract FileArtifactValue fileArtifactValue();
   }
 
   private static FileArtifactValue fileArtifactValueFromStat(
       RootedPath rootedPath,
       FileStatusWithDigest stat,
-      boolean digestWillBeInjected,
       XattrProvider xattrProvider,
       @Nullable TimestampGranularityMonitor tsgm)
       throws IOException {
@@ -661,8 +597,7 @@ final class ActionOutputMetadataStore implements OutputMetadataStore {
     }
 
     FileStateValue fileStateValue =
-        FileStateValue.createWithStatNoFollow(
-            rootedPath, stat, digestWillBeInjected, xattrProvider, tsgm);
+        FileStateValue.createWithStatNoFollow(rootedPath, stat, xattrProvider, tsgm);
 
     return FileArtifactValue.createForNormalFile(
         fileStateValue.getDigest(), fileStateValue.getContentsProxy(), stat.getSize());

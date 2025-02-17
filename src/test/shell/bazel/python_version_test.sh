@@ -58,13 +58,6 @@ msys*)
   ;;
 esac
 
-if "$is_windows"; then
-  # Disable MSYS path conversion that converts path-looking command arguments to
-  # Windows paths (even if they arguments are not in fact paths).
-  export MSYS_NO_PATHCONV=1
-  export MSYS2_ARG_CONV_EXCL="*"
-fi
-
 #### TESTS #############################################################
 
 # Check that our environment setup works.
@@ -154,6 +147,11 @@ EOF
 # The specific issue #5104 was caused by file permissions being lost when
 # unzipping runfiles, which led to an unexecutable runtime.
 function test_build_python_zip_works_with_workspace_runtime() {
+  cat > MODULE.bazel << EOF
+module(name="pyzip")
+bazel_dep(name = "rules_python", version = "0.19.0")
+EOF
+
   mkdir -p test
 
   # The runfiles interpreter is either a sh script or bat script depending on
@@ -165,7 +163,8 @@ function test_build_python_zip_works_with_workspace_runtime() {
   fi
 
   cat > test/BUILD << EOF
-load("@bazel_tools//tools/python:toolchain.bzl", "py_runtime_pair")
+load("@rules_python//python:py_runtime.bzl", "py_runtime")
+load("@rules_python//python:py_runtime_pair.bzl", "py_runtime_pair")
 
 py_binary(
     name = "pybin",
@@ -461,14 +460,14 @@ EOF
   fi
 
   cp bazel-bin/py/foo$exe.runfiles_manifest runfiles_manifest
-  assert_contains _main/external/+_repo_rules+repo2/r2.txt runfiles_manifest \
+  assert_contains _main/external/+local_repository+repo2/r2.txt runfiles_manifest \
     "runfiles manifest didn't have external path mapping"
 
   # By default, Python binaries are put into zip files on Windows and don't
   # have a real runfiles tree.
   if ! "$is_windows"; then
     find bazel-bin/py/foo.runfiles > runfiles_listing
-    assert_contains bazel-bin/py/foo.runfiles/_main/external/+_repo_rules+repo2/r2.txt \
+    assert_contains bazel-bin/py/foo.runfiles/_main/external/+local_repository+repo2/r2.txt \
       runfiles_listing \
       "runfiles didn't have external links"
   fi
@@ -538,8 +537,7 @@ package_group(
     ],
 )
 EOF
-  cat > MODULE.bazel <<EOF
-module(name="python_version_test")
+  cat >> $(setup_module_dot_bazel MODULE.bazel) <<EOF
 bazel_dep(name = "external_repo", version="0.0.0")
 local_path_override(
     module_name = "external_repo",

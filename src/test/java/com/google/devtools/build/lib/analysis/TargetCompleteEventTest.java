@@ -77,8 +77,7 @@ public class TargetCompleteEventTest extends AnalysisTestCase {
             /* announceTargetSummary= */ false);
 
     assertThat(event.referencedLocalFiles())
-        .containsExactly(
-            new LocalFile(artifact.getPath(), LocalFileType.OUTPUT_FILE, artifact, metadata));
+        .containsExactly(new LocalFile(artifact.getPath(), LocalFileType.OUTPUT_FILE, metadata));
   }
 
   @Test
@@ -101,7 +100,7 @@ public class TargetCompleteEventTest extends AnalysisTestCase {
 
     assertThat(event.referencedLocalFiles())
         .containsExactly(
-            new LocalFile(artifact.getPath(), LocalFileType.OUTPUT_DIRECTORY, artifact, metadata));
+            new LocalFile(artifact.getPath(), LocalFileType.OUTPUT_DIRECTORY, metadata));
   }
 
   @Test
@@ -150,9 +149,8 @@ public class TargetCompleteEventTest extends AnalysisTestCase {
 
     assertThat(event.referencedLocalFiles())
         .containsExactly(
-            new LocalFile(fileChild.getPath(), LocalFileType.OUTPUT_FILE, fileChild, fileMetadata),
-            new LocalFile(
-                dirChild.getPath(), LocalFileType.OUTPUT_DIRECTORY, dirChild, dirMetadata));
+            new LocalFile(fileChild.getPath(), LocalFileType.OUTPUT_FILE, fileMetadata),
+            new LocalFile(dirChild.getPath(), LocalFileType.OUTPUT_DIRECTORY, dirMetadata));
   }
 
   @Test
@@ -189,8 +187,7 @@ public class TargetCompleteEventTest extends AnalysisTestCase {
             /* announceTargetSummary= */ false);
 
     assertThat(event.referencedLocalFiles())
-        .containsExactly(
-            new LocalFile(artifact.getPath(), LocalFileType.OUTPUT_SYMLINK, artifact, metadata));
+        .containsExactly(new LocalFile(artifact.getPath(), LocalFileType.OUTPUT_SYMLINK, metadata));
   }
 
   /** Regression test for b/165671166. */
@@ -239,7 +236,10 @@ public class TargetCompleteEventTest extends AnalysisTestCase {
 
   @Test
   public void baselineCoverage_referencedWithMetadata() throws Exception {
-    scratch.file("foo/BUILD", "sh_test(name = 'test', srcs = ['test.sh'])");
+    scratch.file(
+        "foo/BUILD",
+        "load('//test_defs:foo_test.bzl', 'foo_test')",
+        "foo_test(name = 'test', srcs = ['test.sh'])");
     Path testSh = scratch.file("foo/test.sh");
     useConfiguration("--collect_code_coverage");
     ConfiguredTargetAndData ctAndData = getCtAndData("//foo:test");
@@ -256,7 +256,7 @@ public class TargetCompleteEventTest extends AnalysisTestCase {
     CompletionContext completionContext =
         getCompletionContext(
             artifactsToBuild.getAllArtifacts().toList().stream()
-                .filter(a -> !a.isMiddlemanArtifact())
+                .filter(a -> !a.isRunfilesTree())
                 .collect(toImmutableMap(a -> a, a -> testShMetadata)),
             ImmutableMap.of(),
             baselineCoverageMetadata);
@@ -273,7 +273,6 @@ public class TargetCompleteEventTest extends AnalysisTestCase {
             new LocalFile(
                 baselineCoverageArtifact.getPath(),
                 LocalFileType.COVERAGE_OUTPUT,
-                baselineCoverageArtifact,
                 baselineCoverageMetadata));
   }
 

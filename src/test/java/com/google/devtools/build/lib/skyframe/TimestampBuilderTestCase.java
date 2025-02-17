@@ -47,9 +47,8 @@ import com.google.devtools.build.lib.actions.BasicActionLookupValue;
 import com.google.devtools.build.lib.actions.BuildFailedException;
 import com.google.devtools.build.lib.actions.DiscoveredModulesPruner;
 import com.google.devtools.build.lib.actions.Executor;
-import com.google.devtools.build.lib.actions.FileValue;
 import com.google.devtools.build.lib.actions.InputMetadataProvider;
-import com.google.devtools.build.lib.actions.RemoteArtifactChecker;
+import com.google.devtools.build.lib.actions.OutputChecker;
 import com.google.devtools.build.lib.actions.TestExecException;
 import com.google.devtools.build.lib.actions.ThreadStateReceiver;
 import com.google.devtools.build.lib.actions.cache.ActionCache;
@@ -85,6 +84,7 @@ import com.google.devtools.build.lib.skyframe.ExternalFilesHelper.ExternalFileAc
 import com.google.devtools.build.lib.skyframe.PackageLookupFunction.CrossRepositoryLabelViolationStrategy;
 import com.google.devtools.build.lib.skyframe.SkyframeActionExecutor.ActionCompletedReceiver;
 import com.google.devtools.build.lib.skyframe.rewinding.ActionRewindStrategy;
+import com.google.devtools.build.lib.skyframe.serialization.analysis.RemoteAnalysisCachingDependenciesProvider.DisabledDependenciesProvider;
 import com.google.devtools.build.lib.skyframe.serialization.autocodec.SerializationConstant;
 import com.google.devtools.build.lib.testutil.FoundationTestCase;
 import com.google.devtools.build.lib.testutil.TestConstants;
@@ -244,11 +244,14 @@ public abstract class TimestampBuilderTestCase extends FoundationTestCase {
                 .put(
                     FileStateKey.FILE_STATE,
                     new FileStateFunction(() -> tsgm, SyscallCache.NO_CACHE, externalFilesHelper))
-                .put(FileValue.FILE, new FileFunction(pkgLocator, directories))
+                .put(SkyFunctions.FILE, new FileFunction(pkgLocator, directories))
                 .put(
                     Artifact.ARTIFACT,
                     new ArtifactFunction(
-                        () -> true, MetadataConsumerForMetrics.NO_OP, SyscallCache.NO_CACHE))
+                        () -> true,
+                        MetadataConsumerForMetrics.NO_OP,
+                        SyscallCache.NO_CACHE,
+                        () -> DisabledDependenciesProvider.INSTANCE))
                 .put(
                     SkyFunctions.ACTION_EXECUTION,
                     new ActionExecutionFunction(
@@ -259,6 +262,7 @@ public abstract class TimestampBuilderTestCase extends FoundationTestCase {
                         directories,
                         () -> tsgm,
                         BugReporter.defaultInstance(),
+                        () -> DisabledDependenciesProvider.INSTANCE,
                         () -> null))
                 .put(SkyFunctions.PACKAGE, PackageFunction.newBuilder().build())
                 .put(
@@ -333,7 +337,7 @@ public abstract class TimestampBuilderTestCase extends FoundationTestCase {
           OptionsProvider options,
           Range<Long> lastExecutionTimeRange,
           TopLevelArtifactContext topLevelArtifactContext,
-          RemoteArtifactChecker remoteArtifactChecker)
+          OutputChecker outputChecker)
           throws BuildFailedException, InterruptedException, TestExecException {
         latestResult = null;
         skyframeActionExecutor.prepareForExecution(
@@ -499,7 +503,7 @@ public abstract class TimestampBuilderTestCase extends FoundationTestCase {
           options,
           null,
           null,
-          RemoteArtifactChecker.IGNORE_ALL);
+          OutputChecker.TRUST_LOCAL_ONLY);
     } finally {
       tsgm.waitForTimestampGranularity(reporter.getOutErr());
     }
@@ -616,12 +620,5 @@ public abstract class TimestampBuilderTestCase extends FoundationTestCase {
     }
   }
 
-  private static final ActionCompletedReceiver EMPTY_COMPLETION_RECEIVER =
-      new ActionCompletedReceiver() {
-        @Override
-        public void actionCompleted(ActionLookupData actionLookupData) {}
-
-        @Override
-        public void noteActionEvaluationStarted(ActionLookupData actionLookupData, Action action) {}
-      };
+  private static final ActionCompletedReceiver EMPTY_COMPLETION_RECEIVER = ald -> {};
 }

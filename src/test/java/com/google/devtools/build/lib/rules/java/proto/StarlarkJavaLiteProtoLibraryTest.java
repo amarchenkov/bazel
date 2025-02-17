@@ -82,21 +82,23 @@ public class StarlarkJavaLiteProtoLibraryTest extends BuildViewTestCase {
     scratch.appendFile(
         "tools/proto/toolchains/BUILD",
         """
-        package(default_visibility = ["//visibility:public"])
+load('@com_google_protobuf//bazel/toolchains:proto_lang_toolchain.bzl', 'proto_lang_toolchain')
+package(default_visibility = ["//visibility:public"])
 
-        proto_lang_toolchain(
-            name = "javalite",
-            command_line = "--java_out=lite,immutable:$(OUT)",
-            progress_message = "Generating JavaLite proto_library %{label}",
-            runtime = "//protobuf:javalite_runtime",
-        )
-        """);
+proto_lang_toolchain(
+    name = "javalite",
+    command_line = "--java_out=lite,immutable:$(OUT)",
+    progress_message = "Generating JavaLite proto_library %{label}",
+    runtime = "//protobuf:javalite_runtime",
+)
+""");
   }
 
   private void mockRuntimes() throws IOException {
     mockToolsConfig.overwrite(
         "protobuf/BUILD",
         """
+        load("@rules_java//java:defs.bzl", "java_library")
         package(default_visibility = ["//visibility:public"])
 
         java_library(
@@ -112,6 +114,8 @@ public class StarlarkJavaLiteProtoLibraryTest extends BuildViewTestCase {
     scratch.file(
         "x/BUILD",
         """
+        load('@com_google_protobuf//bazel:proto_library.bzl', 'proto_library')
+        load('@com_google_protobuf//bazel:java_lite_proto_library.bzl', 'java_lite_proto_library')
         java_lite_proto_library(
             name = "lite_pb2",
             deps = [":foo"],
@@ -158,6 +162,8 @@ public class StarlarkJavaLiteProtoLibraryTest extends BuildViewTestCase {
     scratch.file(
         "x/BUILD",
         """
+        load('@com_google_protobuf//bazel:proto_library.bzl', 'proto_library')
+        load('@com_google_protobuf//bazel:java_lite_proto_library.bzl', 'java_lite_proto_library')
         java_lite_proto_library(
             name = "lite_pb2",
             deps = [":protolib"],
@@ -189,6 +195,9 @@ public class StarlarkJavaLiteProtoLibraryTest extends BuildViewTestCase {
         scratchConfiguredTarget(
             "java",
             "lite_pb2",
+            "load('@com_google_protobuf//bazel:proto_library.bzl', 'proto_library')",
+            "load('@com_google_protobuf//bazel:java_lite_proto_library.bzl',"
+                + " 'java_lite_proto_library')",
             "java_lite_proto_library(name = 'lite_pb2', deps = [':compiled'])",
             "proto_library(name = 'compiled',",
             "              srcs = [ 'ok.proto' ])");
@@ -204,6 +213,8 @@ public class StarlarkJavaLiteProtoLibraryTest extends BuildViewTestCase {
     scratch.file(
         "java/lib/BUILD",
         """
+        load('@com_google_protobuf//bazel:proto_library.bzl', 'proto_library')
+        load('@com_google_protobuf//bazel:java_lite_proto_library.bzl', 'java_lite_proto_library')
         java_lite_proto_library(
             name = "lite_pb2",
             deps = [":proto"],
@@ -231,16 +242,19 @@ public class StarlarkJavaLiteProtoLibraryTest extends BuildViewTestCase {
         scratchConfiguredTarget(
             "notbad",
             "lite_pb2",
+            "load('@com_google_protobuf//bazel:proto_library.bzl', 'proto_library')",
+            "load('@com_google_protobuf//bazel:java_lite_proto_library.bzl',"
+                + " 'java_lite_proto_library')",
             "java_lite_proto_library(name = 'lite_pb2', deps = [':null_lib'])",
             "proto_library(name = 'null_lib')");
     JavaCompilationArgsProvider compilationArgsProvider =
         JavaInfo.getProvider(JavaCompilationArgsProvider.class, target);
     assertThat(compilationArgsProvider).isNotNull();
-    assertThat(compilationArgsProvider.getDirectCompileTimeJars()).isNotNull();
+    assertThat(compilationArgsProvider.directCompileTimeJars()).isNotNull();
     JavaSourceJarsProvider sourceJarsProvider =
         JavaInfo.getProvider(JavaSourceJarsProvider.class, target);
     assertThat(sourceJarsProvider).isNotNull();
-    assertThat(sourceJarsProvider.getSourceJars()).isNotNull();
+    assertThat(sourceJarsProvider.sourceJars()).isNotNull();
   }
 
   @Test
@@ -248,6 +262,8 @@ public class StarlarkJavaLiteProtoLibraryTest extends BuildViewTestCase {
     scratch.file(
         "cross/BUILD",
         """
+        load('@com_google_protobuf//bazel:proto_library.bzl', 'proto_library')
+        load('@com_google_protobuf//bazel:java_lite_proto_library.bzl', 'java_lite_proto_library')
         java_lite_proto_library(
             name = "lite_pb2",
             deps = ["bravo"],
@@ -277,7 +293,7 @@ public class StarlarkJavaLiteProtoLibraryTest extends BuildViewTestCase {
 
     List<String> directJars =
         prettyArtifactNames(
-            JavaInfo.getProvider(JavaCompilationArgsProvider.class, litepb2).getRuntimeJars());
+            JavaInfo.getProvider(JavaCompilationArgsProvider.class, litepb2).runtimeJars());
     assertThat(directJars)
         .containsExactly("cross/libbravo-lite.jar", "protobuf/libjavalite_runtime.jar");
   }
@@ -322,6 +338,8 @@ public class StarlarkJavaLiteProtoLibraryTest extends BuildViewTestCase {
     scratch.file(
         "x/BUILD",
         """
+        load('@com_google_protobuf//bazel:proto_library.bzl', 'proto_library')
+        load('@com_google_protobuf//bazel:java_lite_proto_library.bzl', 'java_lite_proto_library')
         java_lite_proto_library(
             name = "lite_pb2",
             deps = [":foo"],
@@ -373,6 +391,7 @@ public class StarlarkJavaLiteProtoLibraryTest extends BuildViewTestCase {
     scratch.file(
         "proto/extensions.bzl",
         """
+        load("@rules_java//java/common:java_info.bzl", "JavaInfo")
         def _impl(ctx):
             print(ctx.attr.dep[JavaInfo])
 
@@ -386,6 +405,8 @@ public class StarlarkJavaLiteProtoLibraryTest extends BuildViewTestCase {
     scratch.file(
         "protolib/BUILD",
         """
+        load('@com_google_protobuf//bazel:proto_library.bzl', 'proto_library')
+        load('@com_google_protobuf//bazel:java_lite_proto_library.bzl', 'java_lite_proto_library')
         load("//proto:extensions.bzl", "custom_rule")
 
         proto_library(
@@ -418,6 +439,8 @@ public class StarlarkJavaLiteProtoLibraryTest extends BuildViewTestCase {
     scratch.file(
         "protolib/BUILD",
         """
+        load('@com_google_protobuf//bazel:proto_library.bzl', 'proto_library')
+        load('@com_google_protobuf//bazel:java_lite_proto_library.bzl', 'java_lite_proto_library')
         proto_library(
             name = "proto",
             srcs = ["file.proto"],
@@ -450,6 +473,8 @@ public class StarlarkJavaLiteProtoLibraryTest extends BuildViewTestCase {
     scratch.file(
         "x/BUILD",
         """
+        load('@com_google_protobuf//bazel:proto_library.bzl', 'proto_library')
+        load('@com_google_protobuf//bazel:java_lite_proto_library.bzl', 'java_lite_proto_library')
         java_lite_proto_library(
             name = "foo_java_proto_lite",
             deps = [":foo_proto"],
@@ -471,7 +496,7 @@ public class StarlarkJavaLiteProtoLibraryTest extends BuildViewTestCase {
             JavaCompilationArgsProvider.class, getConfiguredTarget("//x:foo_java_proto_lite"));
 
     Iterable<String> directJars =
-        prettyArtifactNames(compilationArgsProvider.getDirectCompileTimeJars());
+        prettyArtifactNames(compilationArgsProvider.directCompileTimeJars());
 
     assertThat(directJars).containsExactly("x/libbar_proto-lite-hjar.jar");
   }

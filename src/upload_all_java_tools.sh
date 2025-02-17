@@ -45,6 +45,13 @@ echo Platform: $platform
 if [[ "$platform" == "windows" ]]; then
   export MSYS_NO_PATHCONV=1
   export MSYS2_ARG_CONV_EXCL="*"
+
+  # Enforce a UTF-8 code page for the JVM that runs GraalVM so that the
+  # resulting native image of Turbine can handle UTF-8 characters.
+  reg add "HKLM\SYSTEM\CurrentControlSet\Control\Nls\CodePage" /v ACP /t REG_SZ /d 65001 /f
+elif [[ "$platform" == "linux" ]]; then
+  # This locale is used by Java and GraalVM native image compilation actions.
+  echo "C.UTF-8         en_US.UTF-8" | sudo tee -a /usr/share/locale/locale.alias > /dev/null
 fi
 
 commit_hash=$(git rev-parse HEAD)
@@ -52,6 +59,9 @@ timestamp=$(date +%s)
 bazel_version=$(bazel info release | cut -d' ' -f2)
 
 RELEASE_BUILD_OPTS="-c opt --tool_java_language_version=8 --java_language_version=8"
+
+# Check that the build machine is set up for Unicode.
+bazel run ${RELEASE_BUILD_OPTS} //src:CheckSunJnuEncoding
 
 # Passing the same commit_hash and timestamp to all targets to mark all the artifacts
 # uploaded on GCS with the same identifier.
@@ -82,12 +92,14 @@ fi
 # See https://github.com/bazelbuild/bazel/issues/12244 for details
 if [[ "$platform" != "windows" ]]; then
     JAVA_VERSIONS=`cat src/test/shell/bazel/BUILD | grep '^JAVA_VERSIONS = ' | sed -e 's/JAVA_VERSIONS = //' | sed -e 's/["(),]//g'`
+    TEST_TARGETS=""
     for java_version in $JAVA_VERSIONS; do
-        bazel test $TEST_FLAGS --verbose_failures --test_output=all --nocache_test_results \
-            //src/test/shell/bazel:bazel_java_test_local_java_tools_jdk${java_version} \
-            --define=LOCAL_JAVA_TOOLS_ZIP_PATH="${zip_path}" \
-            --define=LOCAL_JAVA_TOOLS_PREBUILT_ZIP_PATH="${prebuilt_zip_path}"
+      TEST_TARGETS="$TEST_TARGETS //src/test/shell/bazel:bazel_java_test_local_java_tools_jdk${java_version}"
     done
+    bazel test $TEST_FLAGS --verbose_failures --test_output=all --nocache_test_results \
+        $TEST_TARGETS \
+        --define=LOCAL_JAVA_TOOLS_ZIP_PATH="${zip_path}" \
+        --define=LOCAL_JAVA_TOOLS_PREBUILT_ZIP_PATH="${prebuilt_zip_path}"
 fi
 
 bazel run ${RELEASE_BUILD_OPTS} //src:upload_java_tools_prebuilt -- \

@@ -14,6 +14,7 @@
 
 package com.google.devtools.build.lib.runtime.mobileinstall;
 
+import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.devtools.build.lib.analysis.OutputGroupInfo.INTERNAL_SUFFIX;
 import static com.google.devtools.build.lib.runtime.Command.BuildPhase.EXECUTES;
 
@@ -38,6 +39,9 @@ import com.google.devtools.build.lib.runtime.Command;
 import com.google.devtools.build.lib.runtime.CommandEnvironment;
 import com.google.devtools.build.lib.runtime.CommonCommandOptions;
 import com.google.devtools.build.lib.runtime.commands.BuildCommand;
+import com.google.devtools.build.lib.runtime.commands.PathToReplaceUtils;
+import com.google.devtools.build.lib.server.CommandProtos.EnvironmentVariable;
+import com.google.devtools.build.lib.server.CommandProtos.ExecRequest;
 import com.google.devtools.build.lib.server.FailureDetails.FailureDetail;
 import com.google.devtools.build.lib.server.FailureDetails.MobileInstall;
 import com.google.devtools.build.lib.server.FailureDetails.MobileInstall.Code;
@@ -57,9 +61,9 @@ import com.google.devtools.common.options.OptionsBase;
 import com.google.devtools.common.options.OptionsParser;
 import com.google.devtools.common.options.OptionsParsingException;
 import com.google.devtools.common.options.OptionsParsingResult;
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
 import javax.annotation.Nullable;
 
 /** Implementation of the 'mobile-install' command. */
@@ -151,16 +155,15 @@ public class MobileInstallCommand implements BlazeCommand {
     public List<String> mobileInstallSupportedRules;
 
     @Option(
-        name = "mobile_install_run_deployer",
-        defaultValue = "true",
+        name = "run_in_client",
+        defaultValue = "false",
         documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
-        effectTags = {
-          OptionEffectTag.LOADING_AND_ANALYSIS,
-          OptionEffectTag.AFFECTS_OUTPUTS,
-          OptionEffectTag.EXECUTION
-        },
-        help = "Whether to run the mobile-install deployer after building all artifacts.")
-    public boolean mobileInstallRunDeployer;
+        effectTags = {OptionEffectTag.BAZEL_INTERNAL_CONFIGURATION},
+        help =
+            "If true, the mobile-install deployer command will be sent to the bazel client for "
+                + "execution. Useful for configurations where the bazel client is on a different "
+                + "machine than the bazel server.")
+    public boolean runInClient;
   }
 
   private static final String SINGLE_TARGET_MESSAGE =
@@ -169,8 +172,6 @@ public class MobileInstallCommand implements BlazeCommand {
 
   @Override
   public BlazeCommandResult exec(CommandEnvironment env, OptionsParsingResult options) {
-    Options mobileInstallOptions = options.getOptions(Options.class);
-
     // This list should look like: ["//executable:target", "arg1", "arg2"]
     List<String> targetAndArgs = options.getResidue();
 
@@ -198,19 +199,16 @@ public class MobileInstallCommand implements BlazeCommand {
             .setStartTimeMillis(env.getCommandStartTime())
             .build();
 
-    BuildResult result;
-    if (mobileInstallOptions.mobileInstallRunDeployer) {
-      result =
-          new BuildTool(env)
-              .processRequest(
-                  request,
-                  /* validator= */ null,
-                  successfulTargets ->
-                      doMobileInstall(env, options, runTargetArgs, successfulTargets));
-    } else {
-      result = new BuildTool(env).processRequest(request, /* validator = */ null);
-    }
-
+    AtomicReference<ExecRequest> deployerRequestRef = new AtomicReference<>();
+    BuildResult result =
+        new BuildTool(env)
+            .processRequest(
+                request,
+                /* validator= */ null,
+                successfulTargets ->
+                    doMobileInstall(
+                        env, options, runTargetArgs, successfulTargets, deployerRequestRef),
+                options);
     if (!result.getSuccess()) {
       env.getReporter().handle(Event.error("Build failed. Not running mobile-install on target."));
       return BlazeCommandResult.detailedExitCode(result.getDetailedExitCode());
@@ -218,7 +216,9 @@ public class MobileInstallCommand implements BlazeCommand {
 
     FailureDetail failureDetail = result.getPostBuildCallBackFailureDetail();
     if (failureDetail == null) {
-      return BlazeCommandResult.success();
+      return deployerRequestRef.get() == null
+          ? BlazeCommandResult.success()
+          : BlazeCommandResult.execute(deployerRequestRef.get());
     }
     return BlazeCommandResult.failureDetail(failureDetail);
   }
@@ -229,7 +229,8 @@ public class MobileInstallCommand implements BlazeCommand {
       CommandEnvironment env,
       OptionsParsingResult options,
       List<String> runTargetArgs,
-      Collection<ConfiguredTarget> successfulTargets)
+      Collection<ConfiguredTarget> successfulTargets,
+      AtomicReference<ExecRequest> deployerRequestRef)
       throws InterruptedException {
     if (successfulTargets == null) {
       env.getReporter().handle(Event.warn(NO_TARGET_MESSAGE));
@@ -252,7 +253,7 @@ public class MobileInstallCommand implements BlazeCommand {
       }
     }
 
-    List<String> cmdLine = new ArrayList<>();
+    ImmutableList.Builder<String> cmdLine = ImmutableList.builder();
     // TODO(bazel-team): Get the executable path from the filesToRun provider from the aspect.
     BuildConfigurationValue configuration =
         env.getSkyframeExecutor()
@@ -300,6 +301,20 @@ public class MobileInstallCommand implements BlazeCommand {
 
     Path workingDir =
         env.getDirectories().getOutputPath(env.getWorkspaceName()).getParentDirectory();
+
+    if (mobileInstallOptions.runInClient) {
+      deployerRequestRef.set(createExecRequest(env, workingDir, cmdLine.build()));
+      return null;
+    } else {
+      return executeAsChild(env, workingDir, cmdLine.build());
+    }
+  }
+
+  /** Executes the mobile-install deployer as a child process on this machine. */
+  @Nullable
+  private static FailureDetail executeAsChild(
+      CommandEnvironment env, Path workingDir, ImmutableList<String> cmdLine)
+      throws InterruptedException {
     com.google.devtools.build.lib.shell.Command command =
         new CommandBuilder()
             .addArgs(cmdLine)
@@ -319,13 +334,13 @@ public class MobileInstallCommand implements BlazeCommand {
       // catch BadExitStatusException.
       command
           .execute(outErr.getOutputStream(), outErr.getErrorStream())
-          .getTerminationStatus()
+          .terminationStatus()
           .getExitCode();
       return null;
     } catch (BadExitStatusException e) {
       String message =
           "Non-zero return code '"
-              + e.getResult().getTerminationStatus().getExitCode()
+              + e.getResult().terminationStatus().getExitCode()
               + "' from command: "
               + e.getMessage();
       env.getReporter().handle(Event.error(message));
@@ -335,6 +350,26 @@ public class MobileInstallCommand implements BlazeCommand {
       env.getReporter().handle(Event.error(message));
       return createFailureResult(message, Code.ERROR_RUNNING_PROGRAM);
     }
+  }
+
+  /** Returns an {@link ExecRequest} for running the mobile-install deployer in the client. */
+  private static ExecRequest createExecRequest(
+      CommandEnvironment env, Path workingDir, ImmutableList<String> cmdLine) {
+    return ExecRequest.newBuilder()
+        .setShouldExec(true)
+        .setWorkingDirectory(PathToReplaceUtils.bytes(workingDir.getPathString()))
+        .addAllArgv(cmdLine.stream().map(PathToReplaceUtils::bytes).collect(toImmutableList()))
+        .addAllPathToReplace(PathToReplaceUtils.getPathsToReplace(env))
+        // TODO: b/333695932 - Shim for client run-support, remove once no longer needed.
+        .addEnvironmentVariable(
+            EnvironmentVariable.newBuilder()
+                .setName(PathToReplaceUtils.bytes("BUILD_WORKING_DIRECTORY"))
+                .setValue(PathToReplaceUtils.bytes(env.getWorkingDirectory().getPathString())))
+        .addEnvironmentVariable(
+            EnvironmentVariable.newBuilder()
+                .setName(PathToReplaceUtils.bytes("BUILD_WORKSPACE_DIRECTORY"))
+                .setValue(PathToReplaceUtils.bytes(env.getWorkspace().getPathString())))
+        .build();
   }
 
   @Override

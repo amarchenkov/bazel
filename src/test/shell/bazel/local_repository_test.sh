@@ -101,7 +101,7 @@ EOF
 
   cat > zoo/dumper.sh <<EOF
 #!/bin/sh
-cat ../+_repo_rules+pandas/red/baby-panda
+cat ../+local_repository+pandas/red/baby-panda
 cat red/day-keeper
 EOF
   chmod +x zoo/dumper.sh
@@ -408,22 +408,6 @@ EOF
   expect_log "My number is 3"
 }
 
-function test_external_query() {
-  local external_dir=$TEST_TMPDIR/x
-  mkdir -p $external_dir
-  touch $external_dir/WORKSPACE
-  cat > WORKSPACE <<EOF
-load("@bazel_tools//tools/build_defs/repo:local.bzl", "local_repository")
-local_repository(
-    name = "my_repo",
-    path = "$external_dir",
-)
-EOF
-  bazel fetch --enable_workspace --repo=@@my_repo || fail "Fetch failed"
-  bazel query --enable_workspace 'deps(//external:my_repo)' >& $TEST_log || fail "query failed"
-  expect_log "//external:my_repo"
-}
-
 function test_repository_package_query() {
   mkdir a b b/b
   cat > MODULE.bazel <<EOF
@@ -481,54 +465,6 @@ EOF
 }
 
 
-function test_missing_path_reported_as_user_defined_it() {
-  add_to_bazelrc "common --enable_workspace"
-  cat >WORKSPACE <<eof
-load("@bazel_tools//tools/build_defs/repo:local.bzl", "local_repository", "new_local_repository")
-local_repository(name = "foo1", path = "./missing")
-
-new_local_repository(name = "foo2", path = "./missing", build_file_content = "")
-eof
-
-  # All repositories can be used as a kind of marker and be queried, even if they can't be fetched.
-  for repo in foo1 foo2; do
-    bazel query "//external:$repo" >& "$TEST_log" || fail "Expected success"
-  done
-
-  # Fetching the repositories should attempt to create symlinks to their directory.
-  # Since the directories don't exist, we expect failure.
-  bazel query @foo1//:* >& "$TEST_log" && fail "Expected failure" || true
-  expect_log "@foo1.* path is \"./missing\" (absolute: \"[^\"]*workspace/missing\").*does not exist"
-
-  bazel query @foo2//:* >& "$TEST_log" && fail "Expected failure" || true
-  expect_log "@foo2.* path is \"./missing\" (absolute: \"[^\"]*workspace/missing\").*does not exist"
-}
-
-function test_path_looking_like_home_directory_is_reported_as_user_defined_it() {
-  add_to_bazelrc "common --enable_workspace"
-  cat >WORKSPACE <<eof
-load("@bazel_tools//tools/build_defs/repo:local.bzl", "local_repository", "new_local_repository")
-local_repository(name = "foo1", path = "~/missing")
-
-new_local_repository(name = "foo2", path = "~/missing", build_file_content = "")
-eof
-
-  # All repositories can be used as a kind of marker and be queried, even if they can't be fetched.
-  for repo in foo1 foo2; do
-    bazel query "//external:$repo" >& "$TEST_log" || fail "Expected success"
-  done
-
-  # Fetching the repositories should attempt to create symlinks to their directory.
-  # Although "~/missing" looks like a path under the home directory, "~/" is only a Bash shorthand
-  # that Bazel does not resolve, and instead treats "~/missing" as a relative path under the
-  # workspace. Assert that the error message clarifies this.
-  bazel query @foo1//:* >& "$TEST_log" && fail "Expected failure" || true
-  expect_log "@foo1.* path is \"~/missing\" (absolute: \"[^\"]*workspace/~/missing\").*does not exist"
-
-  bazel query @foo2//:* >& "$TEST_log" && fail "Expected failure" || true
-  expect_log "@foo2.* path is \"~/missing\" (absolute: \"[^\"]*workspace/~/missing\").*does not exist"
-}
-
 function test_overlaid_build_file() {
   local mutant=$TEST_TMPDIR/mutant
   mkdir $mutant
@@ -552,7 +488,7 @@ genrule(
 EOF
   bazel fetch @mutant//:turtle || fail "Fetch failed"
   bazel build @mutant//:turtle &> $TEST_log || fail "First build failed"
-  assert_contains "Leonardo" bazel-genfiles/external/+_repo_rules+mutant/tmnt
+  assert_contains "Leonardo" bazel-genfiles/external/+new_local_repository+mutant/tmnt
 
   cat > mutant.BUILD <<EOF
 genrule(
@@ -563,7 +499,7 @@ genrule(
 )
 EOF
   bazel build @mutant//:turtle &> $TEST_log || fail "Second build failed"
-  assert_contains "Donatello" bazel-genfiles/external/+_repo_rules+mutant/tmnt
+  assert_contains "Donatello" bazel-genfiles/external/+new_local_repository+mutant/tmnt
 }
 
 function test_external_deps_in_remote_repo() {
@@ -597,7 +533,7 @@ genrule(
 EOF
 
  bazel build @r//:r || fail "build failed"
- assert_contains "GOLF" bazel-genfiles/external/+_repo_rules+r/r.out
+ assert_contains "GOLF" bazel-genfiles/external/+local_repository+r/r.out
 }
 
 function test_local_deps() {
@@ -768,71 +704,6 @@ EOF
   assert_contains "abcxyz" bazel-bin/x.sh
 }
 
-function test_visibility_through_bind() {
-  add_to_bazelrc "common --enable_workspace"
-  local r=$TEST_TMPDIR/r
-  rm -fr $r
-  mkdir $r
-
-  touch $r/WORKSPACE
-  cat > $r/BUILD <<EOF
-genrule(
-    name = "public",
-    srcs = ["//external:public"],
-    outs = ["public.out"],
-    cmd = "cp \$< \$@",
-)
-
-genrule(
-    name = "private",
-    srcs = ["//external:private"],
-    outs = ["private.out"],
-    cmd = "cp \$< \$@",
-)
-EOF
-
-  cat >> WORKSPACE <<EOF
-load("@bazel_tools//tools/build_defs/repo:local.bzl", "local_repository")
-local_repository(
-    name = "r",
-    path = "$r",
-)
-
-bind(
-    name = "public",
-    actual = "//:public",
-)
-
-bind(
-    name = "private",
-    actual = "//:private",
-)
-EOF
-
-  cat > BUILD <<EOF
-genrule(
-    name = "public",
-    srcs = [],
-    outs = ["public.out"],
-    cmd = "echo PUBLIC > \$@",
-    visibility = ["//visibility:public"],
-)
-
-genrule(
-    name = "private",
-    srcs = [],
-    outs = ["private.out"],
-    cmd = "echo PRIVATE > \$@",
-)
-EOF
-
-  bazel build @r//:public >& $TEST_log || fail "failed to build public target"
-  bazel build @r//:private >& $TEST_log && fail "could build private target"
-  # Note: Visibility error extends across multiple lines
-  expect_log "^target '//:private' is not visible from\$"
-  expect_log "^target '//external:private'\$"
-}
-
 function test_load_in_remote_repository() {
   local r=$TEST_TMPDIR/r
   rm -fr $r
@@ -973,8 +844,8 @@ local_repository(name='r', path='$r')
 EOF
 
   bazel build @r//a:b || fail "build failed"
-  cat bazel-genfiles/external/+_repo_rules+r/a/bo > $TEST_log
-  expect_log "@+_repo_rules+r a"
+  cat bazel-genfiles/external/+local_repository+r/a/bo > $TEST_log
+  expect_log "@+local_repository+r a"
 }
 
 function test_slash_in_repo_name() {

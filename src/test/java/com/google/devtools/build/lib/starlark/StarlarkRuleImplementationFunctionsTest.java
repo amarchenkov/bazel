@@ -19,6 +19,7 @@ import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.Truth.assertWithMessage;
 import static com.google.devtools.build.lib.bazel.bzlmod.BzlmodTestUtil.createModuleKey;
 import static com.google.devtools.build.lib.skyframe.BzlLoadValue.keyForBuild;
+import static java.nio.charset.StandardCharsets.ISO_8859_1;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.fail;
 
@@ -45,6 +46,7 @@ import com.google.devtools.build.lib.analysis.DefaultInfo;
 import com.google.devtools.build.lib.analysis.FileProvider;
 import com.google.devtools.build.lib.analysis.FilesToRunProvider;
 import com.google.devtools.build.lib.analysis.Runfiles;
+import com.google.devtools.build.lib.analysis.TransitiveInfoCollection;
 import com.google.devtools.build.lib.analysis.actions.FileWriteAction;
 import com.google.devtools.build.lib.analysis.actions.ParameterFileWriteAction;
 import com.google.devtools.build.lib.analysis.actions.SpawnAction;
@@ -68,8 +70,8 @@ import com.google.devtools.build.lib.testutil.MoreAsserts;
 import com.google.devtools.build.lib.testutil.TestConstants;
 import com.google.devtools.build.lib.util.Fingerprint;
 import com.google.devtools.build.lib.util.OsUtils;
-import java.nio.charset.Charset;
-import java.nio.charset.StandardCharsets;
+import com.google.testing.junit.testparameterinjector.TestParameter;
+import com.google.testing.junit.testparameterinjector.TestParameterInjector;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -79,6 +81,7 @@ import java.util.Optional;
 import java.util.regex.Pattern;
 import net.starlark.java.annot.Param;
 import net.starlark.java.annot.StarlarkMethod;
+import net.starlark.java.eval.Dict;
 import net.starlark.java.eval.EvalException;
 import net.starlark.java.eval.Mutability;
 import net.starlark.java.eval.Printer;
@@ -92,10 +95,9 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.ExpectedException;
 import org.junit.runner.RunWith;
-import org.junit.runners.JUnit4;
 
 /** Tests for Starlark functions relating to rule implementation. */
-@RunWith(JUnit4.class)
+@RunWith(TestParameterInjector.class)
 public final class StarlarkRuleImplementationFunctionsTest extends BuildViewTestCase {
 
   private final BazelEvaluationTestCase ev = new BazelEvaluationTestCase();
@@ -145,6 +147,8 @@ public final class StarlarkRuleImplementationFunctionsTest extends BuildViewTest
     scratch.file(
         "foo/BUILD",
         """
+        load("@rules_java//java:defs.bzl", "java_library")
+        load('//test_defs:foo_binary.bzl', 'foo_binary')
         genrule(name = 'foo',
           cmd = 'dummy_cmd',
           srcs = ['a.txt', 'b.img'],
@@ -166,7 +170,7 @@ public final class StarlarkRuleImplementationFunctionsTest extends BuildViewTest
           output_to_bindir = 1,
         )
         # The target below is used by testResolveCommand and testResolveTools
-        sh_binary(name = 'mytool',
+        foo_binary(name = 'mytool',
           srcs = ['mytool.sh'],
           data = ['file1.dat', 'file2.dat'],
         )
@@ -512,8 +516,9 @@ public final class StarlarkRuleImplementationFunctionsTest extends BuildViewTest
     scratch.file(
         "bar/BUILD",
         """
+        load('//test_defs:foo_binary.bzl', 'foo_binary')
         load('//bar:bar.bzl', 'my_rule')
-        sh_binary(
+        foo_binary(
           name = 'mytool',
           srcs = ['mytool.sh'],
           data = ['file1.dat', 'file2.dat'],
@@ -701,6 +706,134 @@ public final class StarlarkRuleImplementationFunctionsTest extends BuildViewTest
         .isEqualTo("${abc} $(echo) $$ $");
   }
 
+  @Test
+  public void testExpandedLocationWithSingleFileDifferentFromExecutable(
+      @TestParameter boolean locationsPrefersExecutable) throws Exception {
+    setBuildLanguageOptions(
+        "--incompatible_locations_prefers_executable=" + locationsPrefersExecutable);
+
+    scratch.file(
+        "test/defs.bzl",
+        "def _my_binary_impl(ctx):",
+        "  executable = ctx.actions.declare_file(ctx.attr.name + '_executable')",
+        "  ctx.actions.write(executable, '', is_executable = True)",
+        "  file = ctx.actions.declare_file(ctx.attr.name + '_file')",
+        "  ctx.actions.write(file, '')",
+        "  return [DefaultInfo(executable = executable, files = depset([file]))]",
+        "my_binary = rule(",
+        "    implementation = _my_binary_impl,",
+        "    executable = True,",
+        ")",
+        "def _expand_location_rule_impl(ctx):",
+        "  expansions = []",
+        "  for data in ctx.attr.data:",
+        "    expansions.append(",
+        "        ctx.expand_location('$(location ' + str(data.label) + ')', ctx.attr.data),",
+        "    )",
+        "    expansions.append(",
+        "        ctx.expand_location('$(locations ' + str(data.label) + ')', ctx.attr.data)",
+        "    )",
+        "  file = ctx.actions.declare_file(ctx.attr.name)",
+        "  ctx.actions.write(file, '\\n'.join(expansions))",
+        "  return [DefaultInfo(files = depset([file]))]",
+        "expand_location_rule = rule(",
+        "    implementation = _expand_location_rule_impl,",
+        "    attrs = {",
+        "       'data': attr.label_list(),",
+        "    },",
+        ")");
+
+    scratch.file(
+        "test/BUILD",
+        "load('//test:defs.bzl', 'expand_location_rule', 'my_binary')",
+        "my_binary(name = 'main')",
+        "expand_location_rule(",
+        "  name = 'expand',",
+        "  data = [':main'],",
+        ")");
+
+    TransitiveInfoCollection expandTarget = getConfiguredTarget("//test:expand");
+    Artifact artifact =
+        Iterables.getOnlyElement(
+            expandTarget.getProvider(FileProvider.class).getFilesToBuild().toList());
+    FileWriteAction action = (FileWriteAction) getGeneratingAction(artifact);
+    assertThat(action.getFileContents())
+        .matches(
+            """
+            ^\\S*/bin/test/main_file
+            \\S*/bin/test/main_file$\
+            """);
+  }
+
+  @Test
+  public void testExpandedLocationsWithMultipleFilesAndExecutable(
+      @TestParameter boolean locationsPrefersExecutable) throws Exception {
+    setBuildLanguageOptions(
+        "--incompatible_locations_prefers_executable=" + locationsPrefersExecutable);
+
+    scratch.file(
+        "test/defs.bzl",
+        "def _my_binary_impl(ctx):",
+        "  executable = ctx.actions.declare_file(ctx.attr.name + '_executable')",
+        "  ctx.actions.write(executable, '', is_executable = True)",
+        "  file1 = ctx.actions.declare_file(ctx.attr.name + '_file1')",
+        "  file2 = ctx.actions.declare_file(ctx.attr.name + '_file2')",
+        "  ctx.actions.write(file1, '')",
+        "  ctx.actions.write(file2, '')",
+        "  return [DefaultInfo(executable = executable, files = depset([file1, file2]))]",
+        "my_binary = rule(",
+        "    implementation = _my_binary_impl,",
+        "    executable = True,",
+        ")",
+        "def _expand_location_rule_impl(ctx):",
+        "  expansions = []",
+        "  for data in ctx.attr.data:",
+        "    expansions.append(",
+        "        ctx.expand_location('$(location ' + str(data.label) + ')', ctx.attr.data),",
+        "    )",
+        "    expansions.append(",
+        "        ctx.expand_location('$(locations ' + str(data.label) + ')', ctx.attr.data)",
+        "    )",
+        "  file = ctx.actions.declare_file(ctx.attr.name)",
+        "  ctx.actions.write(file, '\\n'.join(expansions))",
+        "  return [DefaultInfo(files = depset([file]))]",
+        "expand_location_rule = rule(",
+        "    implementation = _expand_location_rule_impl,",
+        "    attrs = {",
+        "       'data': attr.label_list(),",
+        "    },",
+        ")");
+
+    scratch.file(
+        "test/BUILD",
+        "load('//test:defs.bzl', 'expand_location_rule', 'my_binary')",
+        "my_binary(name = 'main')",
+        "expand_location_rule(",
+        "  name = 'expand',",
+        "  data = [':main'],",
+        ")");
+
+    reporter.removeHandler(failFastHandler);
+    TransitiveInfoCollection expandTarget = getConfiguredTarget("//test:expand");
+    if (locationsPrefersExecutable) {
+      Artifact artifact =
+          Iterables.getOnlyElement(
+              expandTarget.getProvider(FileProvider.class).getFilesToBuild().toList());
+      FileWriteAction action = (FileWriteAction) getGeneratingAction(artifact);
+      assertThat(action.getFileContents())
+          .matches(
+              """
+              ^\\S*/bin/test/main_executable
+              \\S*/bin/test/main_executable$\
+              """);
+    } else {
+      assertContainsEvent(
+          "label '//test:main' in $(location) expression expands to more than one file");
+      assertContainsEvent("/bin/test/main_file1,");
+      assertContainsEvent("/bin/test/main_file2]");
+    }
+  }
+
   /**
    * Invokes ctx.expand_location() with the given parameters and checks whether this led to the
    * expected result
@@ -748,7 +881,7 @@ public final class StarlarkRuleImplementationFunctionsTest extends BuildViewTest
         "   tools=ruleContext.attr.tools)");
     @SuppressWarnings("unchecked")
     List<Artifact> inputs = (List<Artifact>) (List<?>) (StarlarkList) ev.lookup("inputs");
-    assertArtifactFilenames(inputs, "mytool.sh", "mytool", "foo_Smytool-runfiles", "t.exe");
+    assertArtifactFilenames(inputs, "mytool.sh", "mytool", "mytool.runfiles", "t.exe");
   }
 
   @Test
@@ -868,7 +1001,7 @@ public final class StarlarkRuleImplementationFunctionsTest extends BuildViewTest
         ((Depset) ev.lookup("inputs")).getSet(Artifact.class).toList(),
         "mytool.sh",
         "mytool",
-        "foo_Smytool-runfiles",
+        "mytool.runfiles",
         "t.exe");
 
     SpawnAction action =
@@ -876,7 +1009,7 @@ public final class StarlarkRuleImplementationFunctionsTest extends BuildViewTest
             Iterables.getOnlyElement(
                 ruleContext.getRuleContext().getAnalysisEnvironment().getRegisteredActions());
     assertThat(ActionsTestUtil.baseArtifactNames(action.getInputs()))
-        .containsAtLeast("mytool.sh", "mytool", "foo_Smytool-runfiles", "t.exe");
+        .containsAtLeast("mytool.sh", "mytool", "mytool.runfiles", "t.exe");
   }
 
   @Test
@@ -913,29 +1046,20 @@ public final class StarlarkRuleImplementationFunctionsTest extends BuildViewTest
     assertThat(action.makeExecutable()).isFalse();
   }
 
-  /**
-   * Simulates the fact that the Parser currently uses Latin1 to read BUILD files, while users
-   * usually write those files using UTF-8 encoding. Currently, the string-valued 'substitutions'
-   * parameter of the template_action function contains a hack that assumes its input is a UTF-8
-   * encoded string which has been ingested as Latin 1. The hack converts the string to its
-   * "correct" UTF-8 value. Once Blaze starts calling {@link
-   * net.starlark.java.syntax.ParserInput#fromUTF8} instead of {@code fromLatin1} and the hack for
-   * the substitutions parameter is removed, this test will fail.
-   */
   @Test
-  public void testCreateTemplateActionWithWrongEncoding() throws Exception {
+  public void testCreateTemplateActionUnicode() throws Exception {
     // The following array contains bytes that represent a string of length two when treated as
     // UTF-8 and a string of length four when treated as ISO-8859-1 (a.k.a. Latin 1).
-    byte[] bytesToDecode = {(byte) 0xC2, (byte) 0xA2, (byte) 0xC2, (byte) 0xA2};
-    Charset latin1 = StandardCharsets.ISO_8859_1;
-    Charset utf8 = StandardCharsets.UTF_8;
+    String internalString =
+        new String(new byte[] {(byte) 0xC2, (byte) 0xA2, (byte) 0xC2, (byte) 0xA2}, ISO_8859_1);
     StarlarkRuleContext ruleContext = createRuleContext("//foo:foo");
     setRuleContext(ruleContext);
+    // In production, Bazel parses Starlark as raw bytes encoded as Latin-1.
     ev.exec(
         "ruleContext.actions.expand_template(",
         "  template = ruleContext.files.srcs[0],",
         "  output = ruleContext.files.srcs[1],",
-        "  substitutions = {'a': '" + new String(bytesToDecode, latin1) + "'},",
+        "  substitutions = {'a" + internalString + "': '" + internalString + "'},",
         "  is_executable = False)");
     TemplateExpansionAction action =
         (TemplateExpansionAction)
@@ -943,7 +1067,8 @@ public final class StarlarkRuleImplementationFunctionsTest extends BuildViewTest
                 ruleContext.getRuleContext().getAnalysisEnvironment().getRegisteredActions());
     List<Substitution> substitutions = action.getSubstitutions();
     assertThat(substitutions).hasSize(1);
-    assertThat(substitutions.get(0).getValue()).isEqualTo(new String(bytesToDecode, utf8));
+    assertThat(substitutions.get(0).getKey()).isEqualTo("a" + internalString);
+    assertThat(substitutions.get(0).getValue()).isEqualTo(internalString);
   }
 
   @Test
@@ -1038,22 +1163,6 @@ public final class StarlarkRuleImplementationFunctionsTest extends BuildViewTest
         ev.eval("ruleContext.runfiles(root_symlinks = {'sym1': ruleContext.files.srcs[0]})");
     assertThat(ImmutableList.of("a.txt"))
         .isEqualTo(ActionsTestUtil.baseArtifactNames(getRunfileArtifacts(result)));
-  }
-
-  @Test
-  public void testRunfilesSymlinkConflict() throws Exception {
-    // Two different artifacts mapped to same path in runfiles
-    setRuleContext(createRuleContext("//foo:foo"));
-    ev.exec("prefix = ruleContext.workspace_name + '/' if ruleContext.workspace_name else ''");
-    Object result =
-        ev.eval(
-            "ruleContext.runfiles(",
-            "  root_symlinks = {prefix + 'sym1': ruleContext.files.srcs[0]},",
-            "  symlinks = {'sym1': ruleContext.files.srcs[1]})");
-    Runfiles runfiles = (Runfiles) result;
-    reporter.removeHandler(failFastHandler); // So it doesn't throw an exception.
-    var unused = runfiles.getRunfilesInputs(reporter, null, null);
-    assertContainsEvent("ERROR <no location>: overwrote runfile");
   }
 
   private static Iterable<Artifact> getRunfileArtifacts(Object runfiles) {
@@ -1578,6 +1687,7 @@ public final class StarlarkRuleImplementationFunctionsTest extends BuildViewTest
     scratch.file(
         "test/foo.bzl",
         """
+        load("@rules_java//java/common:java_info.bzl", "JavaInfo")
         FooInfo = provider()
         def _impl(ctx):
             MyFooInfo = FooInfo()
@@ -2105,7 +2215,7 @@ public final class StarlarkRuleImplementationFunctionsTest extends BuildViewTest
         """);
     reporter.removeHandler(failFastHandler);
     getConfiguredTarget("//test:my_glob");
-    assertContainsEvent("glob() can only be used while evaluating a BUILD file (or macro)");
+    assertContainsEvent("glob() can only be used while evaluating a BUILD file (or legacy macro)");
   }
 
   @Test
@@ -3054,14 +3164,15 @@ public final class StarlarkRuleImplementationFunctionsTest extends BuildViewTest
         "a/BUILD",
         """
         load(':a.bzl', 'r')
+        load('//test_defs:foo_binary.bzl', 'foo_binary')
         r(name='r')
-        sh_binary(name='tool', srcs=['tool.sh'], data=['data'])
+        foo_binary(name='tool', srcs=['tool.sh'], data=['data'])
         """);
 
     ConfiguredTarget r = getConfiguredTarget("//a:r");
     Action action =
         getGeneratingAction(r.getProvider(FileProvider.class).getFilesToBuild().getSingleton());
-    assertThat(ActionsTestUtil.baseArtifactNames(action.getInputs())).contains("a_Stool-runfiles");
+    assertThat(ActionsTestUtil.baseArtifactNames(action.getInputs())).contains("tool.runfiles");
   }
 
   @Test
@@ -3086,14 +3197,15 @@ public final class StarlarkRuleImplementationFunctionsTest extends BuildViewTest
         "a/BUILD",
         """
         load(':a.bzl', 'r')
+        load('//test_defs:foo_binary.bzl', 'foo_binary')
         r(name='r')
-        sh_binary(name='tool', srcs=['tool.sh'], data=['data'])
+        foo_binary(name='tool', srcs=['tool.sh'], data=['data'])
         """);
 
     ConfiguredTarget r = getConfiguredTarget("//a:r");
     Action action =
         getGeneratingAction(r.getProvider(FileProvider.class).getFilesToBuild().getSingleton());
-    assertThat(ActionsTestUtil.baseArtifactNames(action.getInputs())).contains("a_Stool-runfiles");
+    assertThat(ActionsTestUtil.baseArtifactNames(action.getInputs())).contains("tool.runfiles");
   }
 
   // Verifies that configuration_field can only be used on 'label' attributes.
@@ -4026,5 +4138,12 @@ args.add_all(d, map_each = _map_each, uniquify = True)
     assertThat(a2).isNotNull();
     assertThat(a2.getRoot().getExecPathString())
         .matches(getRelativeOutputPath() + "/[\\w\\-]+\\-exec/bin");
+  }
+
+  @Test
+  public void testHashableProviders() throws Exception {
+    ev.execAndExport("p = provider()");
+    Dict<?, ?> dict = (Dict<?, ?>) ev.eval("{k: None for k in [DefaultInfo, p, DefaultInfo, p]}");
+    assertThat(dict.size()).isEqualTo(2);
   }
 }

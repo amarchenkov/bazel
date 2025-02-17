@@ -13,7 +13,6 @@
 // limitations under the License.
 package com.google.devtools.build.lib.buildtool;
 
-import static com.google.common.base.Preconditions.checkState;
 import static com.google.common.collect.ImmutableSet.toImmutableSet;
 
 import com.google.common.annotations.VisibleForTesting;
@@ -37,8 +36,8 @@ import com.google.devtools.build.lib.actions.BuildFailedException;
 import com.google.devtools.build.lib.actions.DynamicStrategyRegistry;
 import com.google.devtools.build.lib.actions.Executor;
 import com.google.devtools.build.lib.actions.MachineLoadProvider;
+import com.google.devtools.build.lib.actions.OutputChecker;
 import com.google.devtools.build.lib.actions.PackageRoots;
-import com.google.devtools.build.lib.actions.RemoteArtifactChecker;
 import com.google.devtools.build.lib.actions.ResourceManager;
 import com.google.devtools.build.lib.actions.ResourceSet;
 import com.google.devtools.build.lib.actions.TestExecException;
@@ -85,6 +84,8 @@ import com.google.devtools.build.lib.profiler.SilentCloseable;
 import com.google.devtools.build.lib.runtime.BlazeModule;
 import com.google.devtools.build.lib.runtime.BlazeRuntime;
 import com.google.devtools.build.lib.runtime.CommandEnvironment;
+import com.google.devtools.build.lib.runtime.InstrumentationOutput;
+import com.google.devtools.build.lib.runtime.InstrumentationOutputFactory.DestinationRelativeTo;
 import com.google.devtools.build.lib.server.FailureDetails;
 import com.google.devtools.build.lib.server.FailureDetails.Execution;
 import com.google.devtools.build.lib.server.FailureDetails.Execution.Code;
@@ -184,7 +185,10 @@ public class ExecutionTool {
     actionContextRegistryBuilder.register(
         SymlinkTreeActionContext.class,
         new SymlinkTreeStrategy(
-            env.getOutputService(), env.getBlazeWorkspace().getBinTools(), env.getWorkspaceName()));
+            env.getOutputService(),
+            env.getExecRoot(),
+            env.getBlazeWorkspace().getBinTools(),
+            env.getWorkspaceName()));
     // TODO(philwo) - the ExecutionTool should not add arbitrary dependencies on its own, instead
     // these dependencies should be added to the ActionContextConsumer of the module that actually
     // depends on them.
@@ -266,12 +270,7 @@ public class ExecutionTool {
     BuildRequestOptions buildRequestOptions = request.getBuildOptions();
     SkyframeExecutor skyframeExecutor = env.getSkyframeExecutor();
     boolean localActionsSupported =
-        env.getOutputService().actionFileSystemType().supportsLocalActions();
-
-    // TODO: b/290617036 - Reconsider this for local action support with virtual roots.
-    checkState(
-        !localActionsSupported || env.getDirectories().getVirtualSourceRoot() == null,
-        "Local actions are incompatible with virtual roots");
+        env.getOutputService().actionFileSystemType().shouldDoTopLevelOutputSetup();
 
     try (SilentCloseable c = Profiler.instance().profile("preparingExecroot")) {
       IncrementalPackageRoots incrementalPackageRoots =
@@ -324,14 +323,14 @@ public class ExecutionTool {
 
     skyframeExecutor.drainChangedFiles();
 
-    var remoteArtifactChecker =
+    var outputChecker =
         env.getOutputService() != null
-            ? env.getOutputService().getRemoteArtifactChecker()
-            : RemoteArtifactChecker.IGNORE_ALL;
+            ? env.getOutputService().getOutputChecker()
+            : OutputChecker.TRUST_LOCAL_ONLY;
     skyframeExecutor.detectModifiedOutputFiles(
         modifiedOutputFiles,
         env.getBlazeWorkspace().getLastExecutionTimeRange(),
-        remoteArtifactChecker,
+        outputChecker,
         buildRequestOptions.fsvcThreads);
     try (SilentCloseable c = Profiler.instance().profile("configureActionExecutor")) {
       skyframeExecutor.configureActionExecutor(
@@ -394,7 +393,7 @@ public class ExecutionTool {
     ModifiedFileSet modifiedOutputFiles =
         startBuildAndDetermineModifiedOutputFiles(buildId, outputService);
 
-    if (outputService.actionFileSystemType().supportsLocalActions()) {
+    if (outputService.actionFileSystemType().shouldDoTopLevelOutputSetup()) {
       // Must be created after the output path is created above.
       createActionLogDirectory();
     }
@@ -471,10 +470,10 @@ public class ExecutionTool {
       }
 
       Profiler.instance().markPhase(ProfilePhase.EXECUTE);
-      var remoteArtifactChecker =
+      var outputChecker =
           env.getOutputService() != null
-              ? env.getOutputService().getRemoteArtifactChecker()
-              : RemoteArtifactChecker.IGNORE_ALL;
+              ? env.getOutputService().getOutputChecker()
+              : OutputChecker.TRUST_LOCAL_ONLY;
       builder.buildArtifacts(
           env.getReporter(),
           analysisResult.getArtifactsToBuild(),
@@ -487,7 +486,7 @@ public class ExecutionTool {
           request,
           env.getBlazeWorkspace().getLastExecutionTimeRange(),
           topLevelArtifactContext,
-          remoteArtifactChecker);
+          outputChecker);
       buildCompleted = true;
     } catch (BuildFailedException | TestExecException e) {
       buildCompleted = true;
@@ -519,12 +518,9 @@ public class ExecutionTool {
       informedOutputServiceToStartTheBuild = true;
     }
     if (!request.getPackageOptions().checkOutputFiles) {
-      // Do not skip output invalidation in the following cases:
-      // 1. If the output tree is empty: this can happen after it's cleaned or corrupted.
-      // 2. For a run command: so that outputs are downloaded even if they were previously built
-      //    with --remote_download_minimal. See https://github.com/bazelbuild/bazel/issues/20843.
-      if (!modifiedOutputFiles.treatEverythingAsDeleted()
-          && !request.getCommandName().equals("run")) {
+      // Do not skip output invalidation if the output tree is empty: this can happen after it's
+      // cleaned or corrupted.
+      if (!modifiedOutputFiles.treatEverythingAsDeleted()) {
         return ModifiedFileSet.NOTHING_MODIFIED;
       }
     }
@@ -722,7 +718,7 @@ public class ExecutionTool {
   private static BuildConfigurationValue getConfiguration(
       SkyframeExecutor executor, Reporter reporter, BuildOptions options) {
     try {
-      return executor.getConfiguration(reporter, options, /*keepGoing=*/ false);
+      return executor.getConfiguration(reporter, options, /* keepGoing= */ false);
     } catch (InvalidConfigurationException e) {
       reporter.handle(
           Event.warn(
@@ -846,9 +842,18 @@ public class ExecutionTool {
     }
     ExplanationHandler handler;
     try {
-      handler =
-          new ExplanationHandler(
-              getWorkspace().getRelative(explanationPath).getOutputStream(), allOptions);
+      InstrumentationOutput instrumentationOutput =
+          runtime
+              .getInstrumentationOutputFactory()
+              .createInstrumentationOutput(
+                  /* name= */ "explain",
+                  /* destination= */ explanationPath,
+                  DestinationRelativeTo.WORKSPACE_OR_HOME,
+                  env,
+                  getReporter(),
+                  /* append= */ null,
+                  /* internal= */ null);
+      handler = new ExplanationHandler(instrumentationOutput.createOutputStream(), allOptions);
     } catch (IOException e) {
       getReporter()
           .handle(
@@ -1039,10 +1044,6 @@ public class ExecutionTool {
     return env.getReporter();
   }
 
-  private Path getWorkspace() {
-    return env.getWorkspace();
-  }
-
   private Path getExecRoot() {
     return env.getExecRoot();
   }
@@ -1087,9 +1088,7 @@ public class ExecutionTool {
       if (progressReceiverStarted.compareAndSet(false, true)) {
         // TODO(leba): count test actions
         ExecutionProgressReceiver executionProgressReceiver =
-            new ExecutionProgressReceiver(
-                /*exclusiveTestsCount=*/ 0,
-                env.getEventBus());
+            new ExecutionProgressReceiver(/* exclusiveTestsCount= */ 0, env.getEventBus());
         env.getEventBus()
             .post(new ExecutionProgressReceiverAvailableEvent(executionProgressReceiver));
 

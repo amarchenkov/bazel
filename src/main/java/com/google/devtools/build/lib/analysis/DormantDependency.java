@@ -15,6 +15,14 @@
 package com.google.devtools.build.lib.analysis;
 
 import com.google.devtools.build.lib.cmdline.Label;
+import com.google.devtools.build.lib.skyframe.serialization.LeafDeserializationContext;
+import com.google.devtools.build.lib.skyframe.serialization.LeafObjectCodec;
+import com.google.devtools.build.lib.skyframe.serialization.LeafSerializationContext;
+import com.google.devtools.build.lib.skyframe.serialization.SerializationException;
+import com.google.errorprone.annotations.Keep;
+import com.google.protobuf.CodedInputStream;
+import com.google.protobuf.CodedOutputStream;
+import java.io.IOException;
 import net.starlark.java.annot.StarlarkMethod;
 import net.starlark.java.eval.Printer;
 import net.starlark.java.eval.StarlarkValue;
@@ -27,6 +35,12 @@ import net.starlark.java.eval.StarlarkValue;
  * by rules in the reverse transitive closure.
  */
 public record DormantDependency(Label label) implements StarlarkValue {
+  public static final String NAME = "dormant_dependency";
+  public static final String ALLOWLIST_ATTRIBUTE_NAME = "$allowlist_dormant_dependency";
+  public static final String ALLOWLIST_LABEL_STR =
+      "//tools/allowlists/dormant_dependency_allowlist";
+  public static final Label ALLOWLIST_LABEL = Label.parseCanonicalUnchecked(ALLOWLIST_LABEL_STR);
+
   @Override
   public void repr(Printer printer) {
     printer.append("<dormant dependency label='");
@@ -34,7 +48,7 @@ public record DormantDependency(Label label) implements StarlarkValue {
     printer.append("'>");
   }
 
-  @StarlarkMethod(name = "label", doc = "TBD")
+  @StarlarkMethod(name = "label", structField = true, doc = "TBD")
   public Label getLabel() {
     return label;
   }
@@ -47,5 +61,28 @@ public record DormantDependency(Label label) implements StarlarkValue {
   @Override
   public String toString() {
     return "<dormant dependency " + label.toString() + ">";
+  }
+
+  @Keep
+  private static final class Codec extends LeafObjectCodec<DormantDependency> {
+    @Override
+    public Class<DormantDependency> getEncodedClass() {
+      return DormantDependency.class;
+    }
+
+    @Override
+    public void serialize(
+        LeafSerializationContext context, DormantDependency obj, CodedOutputStream codedOut)
+        throws SerializationException, IOException {
+      context.serializeLeaf(obj.label(), Label.labelCodec(), codedOut);
+    }
+
+    @Override
+    public DormantDependency deserialize(
+        LeafDeserializationContext context, CodedInputStream codedIn)
+        throws SerializationException, IOException {
+      Label label = context.deserializeLeaf(codedIn, Label.labelCodec());
+      return new DormantDependency(label);
+    }
   }
 }

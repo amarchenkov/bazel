@@ -50,17 +50,10 @@ msys*|mingw*|cygwin*)
 esac
 
 if "$is_windows"; then
-  export MSYS_NO_PATHCONV=1
-  export MSYS2_ARG_CONV_EXCL="*"
   declare -r EXE_EXT=".exe"
 else
   declare -r EXE_EXT=""
 fi
-
-# Tests in this file do not actually start a Python interpreter, but plug in a
-# fake stub executable to serve as the "interpreter".
-
-use_fake_python_runtimes_for_testsuite
 
 #### TESTS #############################################################
 
@@ -120,7 +113,6 @@ function test_aspect_required_providers_with_toplevel_aspects() {
   cat > "${package}/lib.bzl" <<EOF
 prov_a = provider()
 prov_b = provider()
-prov_c = provider()
 
 def _aspect_a_impl(target, ctx):
   print("aspect_a runs on target {}".format(target.label))
@@ -135,79 +127,52 @@ aspect_a = aspect(implementation = _aspect_a_impl,
                   required_providers = [prov_a])
 aspect_b = aspect(implementation = _aspect_b_impl,
                   attr_aspects = ['deps'],
-                  required_providers = [prov_b, prov_c])
+                  required_providers = [prov_b])
 
 def _rule_with_a_impl(ctx):
   return [prov_a()]
 
-def _rule_with_bc_impl(ctx):
-  return [prov_b(), prov_c()]
+def _rule_with_b_impl(ctx):
+  return [prov_b()]
 
 rule_with_a = rule(implementation = _rule_with_a_impl,
                     attrs = {'deps': attr.label_list()},
                     provides = [prov_a])
 
-rule_with_bc = rule(implementation = _rule_with_bc_impl,
+rule_with_b = rule(implementation = _rule_with_b_impl,
                    attrs = {'deps': attr.label_list()},
-                   provides = [prov_b, prov_c])
+                   provides = [prov_b])
 EOF
 
   cat > "${package}/BUILD" <<EOF
-load('//${package}:lib.bzl', 'rule_with_a', 'rule_with_bc')
+load('//${package}:lib.bzl', 'rule_with_a', 'rule_with_b')
 rule_with_a(
   name = 'target_with_a',
-  deps = [':target_with_a_indeps', ':target_with_bc']
+  deps = [':target_with_a_in_deps', ':target_with_b']
 )
 
-rule_with_bc(name = 'target_with_bc')
+rule_with_b(name = 'target_with_b')
 
-rule_with_a(name = 'target_with_a_indeps')
+rule_with_a(name = 'target_with_a_in_deps')
 EOF
 
-  # without using --incompatible_top_level_aspects_require_providers, aspect_a
-  # and aspect_b should attempt to run on top level target: target_with_a and
-  # propagate to its dependencies where they will run based on the dependencies
-  # advertised providers.
-  bazel build "${package}:target_with_a" \
-        --noincompatible_top_level_aspects_require_providers \
-        --aspects="//${package}:lib.bzl%aspect_a" \
-        --aspects="//${package}:lib.bzl%aspect_b" &>"$TEST_log" \
-      || fail "Build failed but should have succeeded"
-
-  # Only aspect_a is applied on target_with_a because its "provided" providers
-  # do not macth aspect_b required providers.
-  expect_log "aspect_a runs on target @@\?//${package}:target_with_a"
-  expect_not_log "aspect_b runs on target @@\?//${package}:target_with_a"
-
-  # Only aspect_a can run on target_with_a_indeps
-  expect_log "aspect_a runs on target @@\?//${package}:target_with_a_indeps"
-  expect_not_log "aspect_b runs on target @@\?//${package}:target_with_a_indeps"
-
-  # Only aspect_b can run on target_with_bc
-  expect_not_log "aspect_a runs on target @@\?//${package}:target_with_bc"
-  expect_log "aspect_b runs on target @@\?//${package}:target_with_bc"
-
-  # using --incompatible_top_level_aspects_require_providers, the top level
-  # target rule's advertised providers will be checked and only aspect_a will be
-  # applied on target_with_a and propagated to its dependencies.
   bazel build "${package}:target_with_a" \
         --aspects="//${package}:lib.bzl%aspect_a" \
         --aspects="//${package}:lib.bzl%aspect_b" &>"$TEST_log" \
-        --incompatible_top_level_aspects_require_providers \
       || fail "Build failed but should have succeeded"
 
   # Only aspect_a is applied on target_with_a
   expect_log "aspect_a runs on target @@\?//${package}:target_with_a"
   expect_not_log "aspect_b runs on target @@\?//${package}:target_with_a"
 
-  # Only aspect_a can run on target_with_a_indeps
-  expect_log "aspect_a runs on target @@\?//${package}:target_with_a_indeps"
-  expect_not_log "aspect_b runs on target @@\?//${package}:target_with_a_indeps"
+  # Only aspect_a can run on target_with_a_in_deps
+  expect_log "aspect_a runs on target @@\?//${package}:target_with_a_in_deps"
+  expect_not_log "aspect_b runs on target @@\?//${package}:target_with_a_in_deps"
 
-  # rule_with_bc advertised provides only match the required providers for
+  # rule_with_b advertised provides only match the required providers for
   # aspect_b, but aspect_b is not propagated from target_with_a
-  expect_not_log "aspect_a runs on target @@\?//${package}:target_with_bc"
-  expect_not_log "aspect_b runs on target @@\?//${package}:target_with_bc"
+  expect_not_log "aspect_a runs on target @@\?//${package}:target_with_b"
+  expect_not_log "aspect_b runs on target @@\?//${package}:target_with_b"
 }
 
 function test_aspect_required_providers_default_no_required_providers() {
@@ -1921,6 +1886,88 @@ EOF
       &> $TEST_log || fail "Build failed"
 
   expect_log 'in rule_impl of rule: @@\?//test:t1, toolchain_aspect on dep @@\?//test:t2 = \["toolchain_aspect on @@\?//test:t2", "toolchain_aspect on @@\?//test_toolchains:foo", "toolchain_aspect on @@\?//test_toolchains:toolchain_dep"\]'
+}
+
+function test_aspect_default_info_files_generated() {
+  local package="test"
+  mkdir -p "${package}"
+  cat > "${package}/defs.bzl" <<EOF
+
+def _aspect_impl(target, ctx):
+  files = []
+
+  if hasattr(ctx.rule.attr, 'dep') and ctx.rule.attr.dep:
+    files.append(ctx.rule.attr.dep[DefaultInfo].files)
+
+  f = ctx.actions.declare_file('from_aspect_on_{}'.format(target.label.name))
+  ctx.actions.write(f, 'hi')
+
+  return [DefaultInfo(files=depset(direct = [f], transitive = files))]
+
+my_aspect = aspect(implementation = _aspect_impl, attr_aspects = ['dep'])
+
+def _impl(ctx):
+  f = ctx.actions.declare_file('from_rule_{}'.format(ctx.label.name))
+  ctx.actions.write(f, 'hi')
+  return [DefaultInfo(files=depset([f]))]
+
+my_rule = rule(
+  implementation = _impl,
+  attrs = {
+      "dep": attr.label()
+  },
+)
+EOF
+
+  cat > "${package}/BUILD" <<EOF
+load("//${package}:defs.bzl", "my_rule")
+
+my_rule(name = 't1', dep = 't2')
+my_rule(name = 't2')
+EOF
+
+  bazel build "//${package}:t1" --aspects="//${package}:defs.bzl%my_aspect"\
+      &> $TEST_log || fail "Build failed"
+
+  assert_nonempty_file 'bazel-bin/test/from_aspect_on_t1'
+  assert_nonempty_file 'bazel-bin/test/from_rule_t1'
+
+  assert_nonempty_file 'bazel-bin/test/from_aspect_on_t2'
+  assert_nonempty_file 'bazel-bin/test/from_rule_t2'
+}
+
+# Regression test for https://github.com/bazelbuild/bazel/issues/22691.
+function test_aspect_in_non_existent_overridden_repo() {
+  if [[ "$PRODUCT_NAME" != "bazel" ]]; then
+    return 0
+  fi
+  cat > BUILD.bazel <<'EOF'
+genrule(
+    name = "gen",
+    outs = ["out.txt"],
+    cmd = "touch $@",
+)
+EOF
+
+  mkdir -p foo
+  touch foo/REPO.bazel
+  touch foo/BUILD
+  cat > foo/foo.bzl <<'EOF'
+def _foo_aspect_impl(target, ctx):
+    return []
+
+foo_aspect = aspect(
+    implementation = _foo_aspect_impl,
+)
+EOF
+
+  # Run the Bazel build command
+  bazel build --aspects=@@foo//:foo.bzl%foo_aspect \
+    --override_repository=foo=%workspace%/foo \
+    //:gen &> $TEST_log && fail "Build succeeded"
+  expect_not_log "FATAL"
+  expect_log "--override_repository"
+  expect_log "--inject_repository"
 }
 
 run_suite "Tests for aspects"

@@ -28,8 +28,6 @@ import javax.annotation.Nullable;
 
 /** A fake implementation of the {@link InputMetadataProvider} interface. */
 public final class FakeActionInputFileCache implements InputMetadataProvider {
-  private static final byte[] EMPTY_DIGEST = new byte[0];
-
   private final Map<ActionInput, FileArtifactValue> inputs = new HashMap<>();
   private final Map<ActionInput, RunfilesArtifactValue> runfilesInputs = new HashMap<>();
   private final List<RunfilesTree> runfilesTrees = new ArrayList<>();
@@ -40,22 +38,21 @@ public final class FakeActionInputFileCache implements InputMetadataProvider {
     inputs.put(artifact, metadata);
   }
 
-  public void putRunfilesTree(ActionInput middleman, RunfilesTree runfilesTree) {
+  public void putRunfilesTree(ActionInput runfilesTreeArtifact, RunfilesTree runfilesTree) {
     RunfilesArtifactValue runfilesArtifactValue =
         new RunfilesArtifactValue(
-            FileArtifactValue.createForNormalFile(EMPTY_DIGEST, null, 0),
             runfilesTree,
             ImmutableList.of(),
             ImmutableList.of(),
             ImmutableList.of(),
             ImmutableList.of());
-    runfilesInputs.put(middleman, runfilesArtifactValue);
+    runfilesInputs.put(runfilesTreeArtifact, runfilesArtifactValue);
     runfilesTrees.add(runfilesTree);
   }
 
   @Override
   @Nullable
-  public FileArtifactValue getInputMetadata(ActionInput input) throws IOException {
+  public FileArtifactValue getInputMetadataChecked(ActionInput input) throws IOException {
     return inputs.get(input);
   }
 

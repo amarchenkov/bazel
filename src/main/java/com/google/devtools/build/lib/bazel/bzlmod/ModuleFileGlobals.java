@@ -15,7 +15,6 @@
 
 package com.google.devtools.build.lib.bazel.bzlmod;
 
-
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableCollection;
 import com.google.common.collect.ImmutableList;
@@ -50,7 +49,7 @@ import net.starlark.java.eval.StarlarkThread;
 import net.starlark.java.eval.StarlarkValue;
 import net.starlark.java.eval.Structure;
 import net.starlark.java.eval.Tuple;
-import net.starlark.java.syntax.Location;
+import net.starlark.java.syntax.Identifier;
 
 /** A collection of global Starlark build API functions that apply to MODULE.bazel files. */
 @GlobalMethods(environment = Environment.MODULE)
@@ -172,11 +171,10 @@ public class ModuleFileGlobals {
     }
     if (repoName.isEmpty()) {
       repoName = name;
-      context.addRepoNameUsage(name, "as the current module name", thread.getCallerLocation());
+      context.addRepoNameUsage(name, "as the current module name", thread.getCallStack());
     } else {
       RepositoryName.validateUserProvidedRepoName(repoName);
-      context.addRepoNameUsage(
-          repoName, "as the module's own repo name", thread.getCallerLocation());
+      context.addRepoNameUsage(repoName, "as the module's own repo name", thread.getCallStack());
     }
     Version parsedVersion;
     try {
@@ -294,7 +292,7 @@ public class ModuleFileGlobals {
               name, parsedVersion, maxCompatibilityLevel.toInt("max_compatibility_level")));
     }
 
-    context.addRepoNameUsage(repoName, "by a bazel_dep", thread.getCallerLocation());
+    context.addRepoNameUsage(repoName, "by a bazel_dep", thread.getCallStack());
   }
 
   @StarlarkMethod(
@@ -439,9 +437,8 @@ public class ModuleFileGlobals {
     ModuleThreadContext context = ModuleThreadContext.fromOrFail(thread, "use_extension()");
     context.setNonModuleCalled();
 
-    if (extensionName.equals(ModuleExtensionId.INNATE_EXTENSION_NAME)) {
-      throw Starlark.errorf(
-          "innate extensions cannot be directly used; try `use_repo_rule` instead");
+    if (!Identifier.isValid(extensionName)) {
+      throw Starlark.errorf("extension name is not a valid identifier: %s", extensionName);
     }
 
     var proxyBuilder =
@@ -542,10 +539,23 @@ public class ModuleFileGlobals {
       usageBuilder.addProxyBuilder(proxyBuilder);
     }
 
-    void addImport(String localRepoName, String exportedName, String byWhat, Location location)
+    void addImport(
+        String localRepoName,
+        String exportedName,
+        String byWhat,
+        ImmutableList<StarlarkThread.CallStackEntry> stack)
         throws EvalException {
-      usageBuilder.addImport(localRepoName, exportedName, byWhat, location);
+      usageBuilder.addImport(localRepoName, exportedName, byWhat, stack);
       proxyBuilder.addImport(localRepoName, exportedName);
+    }
+
+    void addOverride(
+        String overriddenRepoName,
+        String overridingRepoName,
+        boolean mustExist,
+        ImmutableList<StarlarkThread.CallStackEntry> stack)
+        throws EvalException {
+      usageBuilder.addRepoOverride(overriddenRepoName, overridingRepoName, mustExist, stack);
     }
 
     class TagCallable implements StarlarkValue {
@@ -627,13 +637,126 @@ public class ModuleFileGlobals {
       throws EvalException {
     ModuleThreadContext context = ModuleThreadContext.fromOrFail(thread, "use_repo()");
     context.setNonModuleCalled();
-    Location location = thread.getCallerLocation();
+    ImmutableList<StarlarkThread.CallStackEntry> stack = thread.getCallStack();
     for (String arg : Sequence.cast(args, String.class, "args")) {
-      extensionProxy.addImport(arg, arg, "by a use_repo() call", location);
+      extensionProxy.addImport(arg, arg, "by a use_repo() call", stack);
     }
     for (Map.Entry<String, String> entry :
         Dict.cast(kwargs, String.class, String.class, "kwargs").entrySet()) {
-      extensionProxy.addImport(entry.getKey(), entry.getValue(), "by a use_repo() call", location);
+      extensionProxy.addImport(entry.getKey(), entry.getValue(), "by a use_repo() call", stack);
+    }
+  }
+
+  @StarlarkMethod(
+      name = "override_repo",
+      doc =
+          """
+          Overrides one or more repos defined by the given module extension with the given repos
+          visible to the current module. This is ignored if the current module is not the root
+          module or `--ignore_dev_dependency` is enabled.
+
+          <p>Use <a href="#inject_repo"><code>inject_repo</code></a> instead to add a new repo.
+          """,
+      parameters = {
+        @Param(
+            name = "extension_proxy",
+            doc = "A module extension proxy object returned by a <code>use_extension</code> call."),
+      },
+      extraPositionals =
+          @Param(
+              name = "args",
+              doc =
+                  """
+                  The repos in the extension that should be overridden with the repos of the same
+                  name in the current module.\
+                  """),
+      extraKeywords =
+          @Param(
+              name = "kwargs",
+              doc =
+                  """
+                  The overrides to apply to the repos generated by the extension, where the values
+                  are the names of repos in the scope of the current module and the keys are the
+                  names of the repos they will override in the extension.\
+                  """),
+      useStarlarkThread = true)
+  public void overrideRepo(
+      ModuleExtensionProxy extensionProxy,
+      Tuple args,
+      Dict<String, Object> kwargs,
+      StarlarkThread thread)
+      throws EvalException {
+    ModuleThreadContext context = ModuleThreadContext.fromOrFail(thread, "override_repo()");
+    context.setNonModuleCalled();
+    if (context.shouldIgnoreDevDeps()) {
+      // Ignore calls early as they may refer to repos that are dev dependencies (or this is not the
+      // root module).
+      return;
+    }
+    ImmutableList<StarlarkThread.CallStackEntry> stack = thread.getCallStack();
+    for (String arg : Sequence.cast(args, String.class, "args")) {
+      extensionProxy.addOverride(arg, arg, /* mustExist= */ true, stack);
+    }
+    for (Map.Entry<String, String> entry :
+        Dict.cast(kwargs, String.class, String.class, "kwargs").entrySet()) {
+      extensionProxy.addOverride(entry.getKey(), entry.getValue(), /* mustExist= */ true, stack);
+    }
+  }
+
+  @StarlarkMethod(
+      name = "inject_repo",
+      doc =
+          """
+          Injects one or more new repos into the given module extension.
+          This is ignored if the current module is not the root module or
+          <code>--ignore_dev_dependency</code> is enabled.
+
+          <p>Use <a href="#override_repo"><code>override_repo</code></a> instead to override an
+          existing repo.\
+          """,
+      parameters = {
+        @Param(
+            name = "extension_proxy",
+            doc = "A module extension proxy object returned by a <code>use_extension</code> call."),
+      },
+      extraPositionals =
+          @Param(
+              name = "args",
+              doc =
+                  """
+                  The repos visible to the current module that should be injected into the
+                  extension under the same name.\
+                  """),
+      extraKeywords =
+          @Param(
+              name = "kwargs",
+              doc =
+                  """
+                  The new repos to inject into the extension, where the values are the names of
+                  repos in the scope of the current module and the keys are the name they will be
+                  visible under in the extension.\
+                  """),
+      useStarlarkThread = true)
+  public void injectRepo(
+      ModuleExtensionProxy extensionProxy,
+      Tuple args,
+      Dict<String, Object> kwargs,
+      StarlarkThread thread)
+      throws EvalException {
+    ModuleThreadContext context = ModuleThreadContext.fromOrFail(thread, "inject_repo()");
+    context.setNonModuleCalled();
+    if (context.shouldIgnoreDevDeps()) {
+      // Ignore calls early as they may refer to repos that are dev dependencies (or this is not the
+      // root module).
+      return;
+    }
+    ImmutableList<StarlarkThread.CallStackEntry> stack = thread.getCallStack();
+    for (String arg : Sequence.cast(args, String.class, "args")) {
+      extensionProxy.addOverride(arg, arg, /* mustExist= */ false, stack);
+    }
+    for (Map.Entry<String, String> entry :
+        Dict.cast(kwargs, String.class, String.class, "kwargs").entrySet()) {
+      extensionProxy.addOverride(entry.getKey(), entry.getValue(), /* mustExist= */ false, stack);
     }
   }
 
@@ -661,30 +784,28 @@ public class ModuleFileGlobals {
       throws EvalException {
     ModuleThreadContext context = ModuleThreadContext.fromOrFail(thread, "use_repo_rule()");
     context.setNonModuleCalled();
-    // Find or create the builder for the singular "innate" extension of this module.
+    // Not a valid Starlark identifier so that it can't collide with a real extension.
+    String extensionName = bzlFile + ' ' + ruleName;
+    // Find or create the builder for the singular "innate" extension of this repo rule for this
+    // module.
     for (ModuleExtensionUsageBuilder usageBuilder : context.getExtensionUsageBuilders()) {
-      if (usageBuilder.isForExtension("//:MODULE.bazel", ModuleExtensionId.INNATE_EXTENSION_NAME)) {
-        return new RepoRuleProxy(usageBuilder, bzlFile + '%' + ruleName);
+      if (usageBuilder.isForExtension("//:MODULE.bazel", extensionName)) {
+        return new RepoRuleProxy(usageBuilder);
       }
     }
     ModuleExtensionUsageBuilder newUsageBuilder =
         new ModuleExtensionUsageBuilder(
-            context,
-            "//:MODULE.bazel",
-            ModuleExtensionId.INNATE_EXTENSION_NAME,
-            /* isolate= */ false);
+            context, "//:MODULE.bazel", extensionName, /* isolate= */ false);
     context.getExtensionUsageBuilders().add(newUsageBuilder);
-    return new RepoRuleProxy(newUsageBuilder, bzlFile + '%' + ruleName);
+    return new RepoRuleProxy(newUsageBuilder);
   }
 
   @StarlarkBuiltin(name = "repo_rule_proxy", documented = false)
   static class RepoRuleProxy implements StarlarkValue {
     private final ModuleExtensionUsageBuilder usageBuilder;
-    private final String tagName;
 
-    private RepoRuleProxy(ModuleExtensionUsageBuilder usageBuilder, String tagName) {
+    private RepoRuleProxy(ModuleExtensionUsageBuilder usageBuilder) {
       this.usageBuilder = usageBuilder;
-      this.tagName = tagName;
     }
 
     @StarlarkMethod(
@@ -713,8 +834,8 @@ public class ModuleFileGlobals {
                   .setLocation(thread.getCallerLocation())
                   .setContainingModuleFilePath(
                       usageBuilder.getContext().getCurrentModuleFilePath()));
-      extensionProxy.getValue(tagName).call(kwargs, thread);
-      extensionProxy.addImport(name, name, "by a repo rule", thread.getCallerLocation());
+      extensionProxy.getValue("repo").call(kwargs, thread);
+      extensionProxy.addImport(name, name, "by a repo rule", thread.getCallStack());
     }
   }
 
@@ -737,7 +858,8 @@ public class ModuleFileGlobals {
             doc =
                 "The label pointing to the file to include. The label must point to a file in the"
                     + " main repo; in other words, it <strong>must<strong> start with double"
-                    + " slashes (<code>//</code>)."),
+                    + " slashes (<code>//</code>). The name of the file must end with"
+                    + " <code>.MODULE.bazel</code> and must not start with <code>.</code>."),
       },
       useStarlarkThread = true)
   public void include(String label, StarlarkThread thread)
@@ -784,7 +906,10 @@ public class ModuleFileGlobals {
             doc =
                 "A list of labels pointing to patch files to apply for this module. The patch files"
                     + " must exist in the source tree of the top level project. They are applied in"
-                    + " the list order.",
+                    + " the list order."
+                    + ""
+                    + "<p>If a patch makes changes to the MODULE.bazel file, these changes will"
+                    + " only be effective if the patch file is provided by the root module.",
             allowedTypes = {@ParamType(type = Iterable.class, generic1 = String.class)},
             named = true,
             positional = false,
@@ -792,7 +917,9 @@ public class ModuleFileGlobals {
         @Param(
             name = "patch_cmds",
             doc =
-                "Sequence of Bash commands to be applied on Linux/Macos after patches are applied.",
+                "Sequence of Bash commands to be applied on Linux/Macos after patches are applied."
+                    + ""
+                    + "<p>Changes to the MODULE.bazel file will not be effective.",
             allowedTypes = {@ParamType(type = Iterable.class, generic1 = String.class)},
             named = true,
             positional = false,
@@ -900,196 +1027,92 @@ public class ModuleFileGlobals {
   @StarlarkMethod(
       name = "archive_override",
       doc =
-          "Specifies that this dependency should come from an archive file (zip, gzip, etc) at a"
-              + " certain location, instead of from a registry. This"
-              + " directive only takes effect in the root module; in other words, if a module"
-              + " is used as a dependency by others, its own overrides are ignored.",
+          """
+          Specifies that this dependency should come from an archive file (zip, gzip, etc) at a
+          certain location, instead of from a registry. Effectively, this dependency will be
+          backed by an <a href="../repo/http#http_archive"><code>http_archive</code></a> rule.
+
+          <p>This directive only takes effect in the root module; in other words, if a module is
+          used as a dependency by others, its own overrides are ignored.\
+          """,
       parameters = {
         @Param(
             name = "module_name",
             doc = "The name of the Bazel module dependency to apply this override to.",
             named = true,
             positional = false),
-        @Param(
-            name = "urls",
-            allowedTypes = {
-              @ParamType(type = String.class),
-              @ParamType(type = Iterable.class, generic1 = String.class),
-            },
-            doc = "The URLs of the archive; can be http(s):// or file:// URLs.",
-            named = true,
-            positional = false),
-        @Param(
-            name = "integrity",
-            doc = "The expected checksum of the archive file, in Subresource Integrity format.",
-            named = true,
-            positional = false,
-            defaultValue = "''"),
-        @Param(
-            name = "strip_prefix",
-            doc = "A directory prefix to strip from the extracted files.",
-            named = true,
-            positional = false,
-            defaultValue = "''"),
-        @Param(
-            name = "patches",
-            doc =
-                "A list of labels pointing to patch files to apply for this module. The patch files"
-                    + " must exist in the source tree of the top level project. They are applied in"
-                    + " the list order.",
-            allowedTypes = {@ParamType(type = Iterable.class, generic1 = String.class)},
-            named = true,
-            positional = false,
-            defaultValue = "[]"),
-        @Param(
-            name = "patch_cmds",
-            doc =
-                "Sequence of Bash commands to be applied on Linux/Macos after patches are applied.",
-            allowedTypes = {@ParamType(type = Iterable.class, generic1 = String.class)},
-            named = true,
-            positional = false,
-            defaultValue = "[]"),
-        @Param(
-            name = "patch_strip",
-            doc = "Same as the --strip argument of Unix patch.",
-            named = true,
-            positional = false,
-            defaultValue = "0"),
       },
+      extraKeywords =
+          @Param(
+              name = "kwargs",
+              doc =
+                  """
+                  All other arguments are forwarded to the underlying <code>http_archive</code> repo
+                  rule. Note that the <code>name</code> attribute shouldn't be specified; use
+                  <code>module_name</code> instead.\
+                  """),
       useStarlarkThread = true)
-  public void archiveOverride(
-      String moduleName,
-      Object urls,
-      String integrity,
-      String stripPrefix,
-      Iterable<?> patches,
-      Iterable<?> patchCmds,
-      StarlarkInt patchStrip,
-      StarlarkThread thread)
+  public void archiveOverride(String moduleName, Dict<String, Object> kwargs, StarlarkThread thread)
       throws EvalException {
     ModuleThreadContext context = ModuleThreadContext.fromOrFail(thread, "archive_override()");
     context.setNonModuleCalled();
     validateModuleName(moduleName);
-    ImmutableList<String> urlList =
-        urls instanceof String string
-            ? ImmutableList.of(string)
-            : Sequence.cast(urls, String.class, "urls").getImmutableList();
-    ImmutableList.Builder<Label> patchesBuilder = ImmutableList.builder();
-    for (String patch : Sequence.cast(patches, String.class, "patches")) {
-      patchesBuilder.add(convertAndValidatePatchLabel(context.getModuleBuilder(), patch));
-    }
     context.addOverride(
         moduleName,
-        ArchiveOverride.create(
-            urlList,
-            patchesBuilder.build(),
-            Sequence.cast(patchCmds, String.class, "patchCmds").getImmutableList(),
-            integrity,
-            stripPrefix,
-            patchStrip.toInt("archive_override.patch_strip")));
+        new NonRegistryOverride(
+            new RepoSpec(ArchiveRepoSpecBuilder.HTTP_ARCHIVE, AttributeValues.create(kwargs))));
   }
 
   @StarlarkMethod(
       name = "git_override",
       doc =
-          "Specifies that a dependency should come from a certain commit of a Git repository. This"
-              + " directive only takes effect in the root module; in other words, if a module"
-              + " is used as a dependency by others, its own overrides are ignored.",
+          """
+          Specifies that this dependency should come from a certain commit in a Git repository,
+          instead of from a registry. Effectively, this dependency will be backed by a
+          <a href="../repo/git#git_repository"><code>git_repository</code></a> rule.
+
+          <p>This directive only takes effect in the root module; in other words, if a module is
+          used as a dependency by others, its own overrides are ignored.\
+          """,
       parameters = {
         @Param(
             name = "module_name",
             doc = "The name of the Bazel module dependency to apply this override to.",
             named = true,
             positional = false),
-        @Param(
-            name = "remote",
-            doc = "The URL of the remote Git repository.",
-            named = true,
-            positional = false),
-        @Param(
-            name = "commit",
-            doc = "The commit that should be checked out.",
-            named = true,
-            positional = false,
-            defaultValue = "''"),
-        @Param(
-            name = "patches",
-            doc =
-                "A list of labels pointing to patch files to apply for this module. The patch files"
-                    + " must exist in the source tree of the top level project. They are applied in"
-                    + " the list order.",
-            allowedTypes = {@ParamType(type = Iterable.class, generic1 = String.class)},
-            named = true,
-            positional = false,
-            defaultValue = "[]"),
-        @Param(
-            name = "patch_cmds",
-            doc =
-                "Sequence of Bash commands to be applied on Linux/Macos after patches are applied.",
-            allowedTypes = {@ParamType(type = Iterable.class, generic1 = String.class)},
-            named = true,
-            positional = false,
-            defaultValue = "[]"),
-        @Param(
-            name = "patch_strip",
-            doc = "Same as the --strip argument of Unix patch.",
-            named = true,
-            positional = false,
-            defaultValue = "0"),
-        @Param(
-            name = "init_submodules",
-            doc = "Whether git submodules in the fetched repo should be recursively initialized.",
-            named = true,
-            positional = false,
-            defaultValue = "False"),
-        @Param(
-            name = "strip_prefix",
-            doc =
-                "A directory prefix to strip from the extracted files. This can be used to target"
-                    + " a subdirectory of the git repo. Note that the subdirectory must have its"
-                    + " own `MODULE.bazel` file with a module name that is the same as the"
-                    + " `module_name` arg passed to this `git_override`.",
-            named = true,
-            positional = false,
-            defaultValue = "''"),
       },
+      extraKeywords =
+          @Param(
+              name = "kwargs",
+              doc =
+                  """
+                  All other arguments are forwarded to the underlying <code>git_repository</code>
+                  repo rule. Note that the <code>name</code> attribute shouldn't be specified; use
+                  <code>module_name</code> instead.\
+                  """),
       useStarlarkThread = true)
-  public void gitOverride(
-      String moduleName,
-      String remote,
-      String commit,
-      Iterable<?> patches,
-      Iterable<?> patchCmds,
-      StarlarkInt patchStrip,
-      boolean initSubmodules,
-      String stripPrefix,
-      StarlarkThread thread)
+  public void gitOverride(String moduleName, Dict<String, Object> kwargs, StarlarkThread thread)
       throws EvalException {
     ModuleThreadContext context = ModuleThreadContext.fromOrFail(thread, "git_override()");
     context.setNonModuleCalled();
     validateModuleName(moduleName);
-    ImmutableList.Builder<Label> patchesBuilder = ImmutableList.builder();
-    for (String patch : Sequence.cast(patches, String.class, "patches")) {
-      patchesBuilder.add(convertAndValidatePatchLabel(context.getModuleBuilder(), patch));
-    }
     context.addOverride(
         moduleName,
-        GitOverride.create(
-            remote,
-            commit,
-            patchesBuilder.build(),
-            Sequence.cast(patchCmds, String.class, "patchCmds").getImmutableList(),
-            patchStrip.toInt("git_override.patch_strip"),
-            initSubmodules,
-            stripPrefix));
+        new NonRegistryOverride(
+            new RepoSpec(GitRepoSpecBuilder.GIT_REPOSITORY, AttributeValues.create(kwargs))));
   }
 
   @StarlarkMethod(
       name = "local_path_override",
       doc =
-          "Specifies that a dependency should come from a certain directory on local disk. This"
-              + " directive only takes effect in the root module; in other words, if a module"
-              + " is used as a dependency by others, its own overrides are ignored.",
+          """
+          Specifies that this dependency should come from a certain directory on local disk,
+          instead of from a registry. Effectively, this dependency will be backed by a
+          <a href="../repo/local#local_repository"><code>local_repository</code></a> rule.
+
+          <p>This directive only takes effect in the root module; in other words, if a module is
+          used as a dependency by others, its own overrides are ignored.\
+          """,
       parameters = {
         @Param(
             name = "module_name",
@@ -1108,6 +1131,6 @@ public class ModuleFileGlobals {
     ModuleThreadContext context = ModuleThreadContext.fromOrFail(thread, "local_path_override()");
     context.setNonModuleCalled();
     validateModuleName(moduleName);
-    context.addOverride(moduleName, LocalPathOverride.create(path));
+    context.addOverride(moduleName, new NonRegistryOverride(LocalPathRepoSpecs.create(path)));
   }
 }

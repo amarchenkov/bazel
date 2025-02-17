@@ -24,8 +24,6 @@ import static com.google.devtools.build.lib.packages.BuildType.NODEP_LABEL;
 import static com.google.devtools.build.lib.packages.BuildType.OUTPUT_LIST;
 import static com.google.devtools.build.lib.packages.ImplicitOutputsFunction.substitutePlaceholderIntoTemplate;
 import static com.google.devtools.build.lib.packages.RuleClass.Builder.STARLARK_BUILD_SETTING_DEFAULT_ATTR_NAME;
-import static com.google.devtools.build.lib.packages.RuleClass.NO_EXTERNAL_BINDINGS;
-import static com.google.devtools.build.lib.packages.RuleClass.NO_TOOLCHAINS_TO_REGISTER;
 import static com.google.devtools.build.lib.packages.Type.BOOLEAN;
 import static com.google.devtools.build.lib.packages.Type.INTEGER;
 import static com.google.devtools.build.lib.packages.Type.STRING;
@@ -49,6 +47,7 @@ import com.google.devtools.build.lib.events.EventCollector;
 import com.google.devtools.build.lib.events.EventKind;
 import com.google.devtools.build.lib.packages.Attribute.StarlarkComputedDefaultTemplate.CannotPrecomputeDefaultsException;
 import com.google.devtools.build.lib.packages.ImplicitOutputsFunction.SafeImplicitOutputsFunction;
+import com.google.devtools.build.lib.packages.RuleClass.AutoExecGroupsMode;
 import com.google.devtools.build.lib.packages.RuleClass.Builder.RuleClassType;
 import com.google.devtools.build.lib.packages.RuleClass.ConfiguredTargetFactory;
 import com.google.devtools.build.lib.packages.RuleClass.ToolchainResolutionMode;
@@ -1050,8 +1049,6 @@ public final class RuleClassTest extends PackageLoadingTestCase {
         configuredTargetFactory,
         advertisedProviders,
         configuredTargetFunction,
-        NO_EXTERNAL_BINDINGS,
-        NO_TOOLCHAINS_TO_REGISTER,
         /* optionReferenceFunction= */ RuleClass.NO_OPTION_REFERENCE,
         /* ruleDefinitionEnvironmentLabel= */ null,
         /* ruleDefinitionEnvironmentDigest= */ null,
@@ -1064,6 +1061,7 @@ public final class RuleClassTest extends PackageLoadingTestCase {
         /* toolchainResolutionMode= */ ToolchainResolutionMode.ENABLED,
         /* executionPlatformConstraints= */ ImmutableSet.of(),
         /* execGroups= */ ImmutableMap.of(),
+        AutoExecGroupsMode.DYNAMIC,
         OutputFile.Kind.FILE,
         attributes.length > 0 && attributes[0].equals(RuleClass.NAME_ATTRIBUTE)
             ? ImmutableList.copyOf(attributes)
@@ -1208,7 +1206,6 @@ public final class RuleClassTest extends PackageLoadingTestCase {
             ExecGroup.builder()
                 .addToolchainType(ToolchainTypeRequirement.create(toolchain))
                 .execCompatibleWith(ImmutableSet.of(constraint))
-                .copyFrom(null)
                 .build()));
 
     RuleClass ruleClass = ruleClassBuilder.build();

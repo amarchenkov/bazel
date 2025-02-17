@@ -67,8 +67,11 @@ import javax.annotation.Nullable;
 /** This module provides the Sandbox spawn strategy. */
 public final class SandboxModule extends BlazeModule {
 
+  private static final String MAC_INDEX_FILE = ".DS_Store";
+
   private static final ImmutableSet<String> SANDBOX_BASE_PERSISTENT_DIRS =
       ImmutableSet.of(
+          MAC_INDEX_FILE,
           SandboxStash.SANDBOX_STASH_BASE,
           SandboxStash.TEMPORARY_SANDBOX_STASH_BASE,
           AsynchronousTreeDeleter.MOVED_TRASH_DIR);
@@ -580,8 +583,7 @@ public final class SandboxModule extends BlazeModule {
     // If asynchronous deletions were requested, they may still be ongoing so let them be: trying
     // to delete the base tree synchronously could fail as we can race with those other deletions,
     // and scheduling an asynchronous deletion could race with future builds.
-    if (asyncTreeDeleteThreads > 0 && treeDeleter instanceof AsynchronousTreeDeleter) {
-      AsynchronousTreeDeleter treeDeleter = (AsynchronousTreeDeleter) this.treeDeleter;
+    if (asyncTreeDeleteThreads > 0 && treeDeleter instanceof AsynchronousTreeDeleter treeDeleter) {
       treeDeleter.setThreads(asyncTreeDeleteThreads);
     }
     // `treeDeleter` might not be an AsynchronousTreeDeleter if the user changed the option but

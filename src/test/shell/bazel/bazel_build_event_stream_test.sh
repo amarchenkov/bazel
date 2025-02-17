@@ -58,13 +58,6 @@ msys*)
   ;;
 esac
 
-if "$is_windows"; then
-  # Disable MSYS path conversion that converts path-looking command arguments to
-  # Windows paths (even if they arguments are not in fact paths).
-  export MSYS_NO_PATHCONV=1
-  export MSYS2_ARG_CONV_EXCL="*"
-fi
-
 function set_up() {
   mkdir -p pkg
   touch remote_file
@@ -186,9 +179,9 @@ EOF
 
   # TODO: https://github.com/bazelbuild/bazel/issues/23240
   # Create a new event id type that doesn't use "//external"
-  expect_log 'label: "//external:+_repo_rules+remote"'
+  expect_log 'label: "//external:+failing+remote"'
   expect_log 'description:.*This is the error message'
-  expect_not_log 'label.*@+_repo_rules+remote//file'
+  expect_not_log 'label.*@+failing+remote//file'
 }
 
 function test_residue_in_run_bep(){

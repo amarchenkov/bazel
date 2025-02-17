@@ -64,7 +64,9 @@ public class ConfigurableAttributesTest extends BuildViewTestCase {
   }
 
   private void writeHelloRules(boolean includeDefaultCondition) throws IOException {
-    scratch.file("java/hello/BUILD",
+    scratch.file(
+        "java/hello/BUILD",
+        "load('@rules_java//java:defs.bzl', 'java_binary', 'java_library')",
         "java_binary(",
         "    name = 'hello',",
         "    srcs = ['hello.java'],",
@@ -232,7 +234,9 @@ public class ConfigurableAttributesTest extends BuildViewTestCase {
   @Test
   public void depsWithDuplicatesInDifferentBranches() throws Exception {
     writeConfigRules();
-    scratch.file("java/hello/BUILD",
+    scratch.file(
+        "java/hello/BUILD",
+        "load('@rules_java//java:defs.bzl', 'java_binary', 'java_library')",
         "java_binary(",
         "    name = 'hello',",
         "    srcs = ['hello.java'],",
@@ -264,7 +268,9 @@ public class ConfigurableAttributesTest extends BuildViewTestCase {
   @Test
   public void depsWithDuplicatesInSameBranch() throws Exception {
     writeConfigRules();
-    scratch.file("java/hello/BUILD",
+    scratch.file(
+        "java/hello/BUILD",
+        "load('@rules_java//java:defs.bzl', 'java_binary', 'java_library')",
         "java_binary(",
         "    name = 'hello',",
         "    srcs = ['hello.java'],",
@@ -302,6 +308,7 @@ public class ConfigurableAttributesTest extends BuildViewTestCase {
     scratch.file(
         "java/hello/BUILD",
         """
+        load("@rules_java//java:defs.bzl", "java_binary")
         java_binary(
             name = 'hello',
             srcs = select({
@@ -332,6 +339,7 @@ public class ConfigurableAttributesTest extends BuildViewTestCase {
     scratch.file(
         "java/hello/BUILD",
         """
+        load("@rules_java//java:defs.bzl", "java_binary")
         java_binary(
             name = 'hello',
             srcs = select({
@@ -358,6 +366,7 @@ public class ConfigurableAttributesTest extends BuildViewTestCase {
     scratch.file(
         "java/hello/BUILD",
         """
+        load("@rules_java//java:defs.bzl", "java_binary")
         java_binary(
             name = 'hello',
             srcs = select({
@@ -450,6 +459,7 @@ public class ConfigurableAttributesTest extends BuildViewTestCase {
     scratch.file(
         "java/foo/BUILD",
         """
+        load("@rules_java//java:defs.bzl", "java_library")
         java_library(
             name = 'int_key',
             srcs = select({123: ['a.java']})
@@ -465,6 +475,7 @@ public class ConfigurableAttributesTest extends BuildViewTestCase {
     scratch.file(
         "java/foo/BUILD",
         """
+        load("@rules_java//java:defs.bzl", "java_library")
         java_library(
             name = 'bool_key',
             srcs = select({True: ['a.java']})
@@ -480,6 +491,7 @@ public class ConfigurableAttributesTest extends BuildViewTestCase {
     scratch.file(
         "java/foo/BUILD",
         """
+        load("@rules_java//java:defs.bzl", "java_library")
         java_library(
             name = 'none_key',
             srcs = select({None: ['a.java']})
@@ -719,6 +731,7 @@ public class ConfigurableAttributesTest extends BuildViewTestCase {
     scratch.file(
         "java/a/BUILD",
         """
+        load("@rules_java//java:defs.bzl", "java_binary", "java_library")
         java_binary(
             name = 'binary',
             srcs = ['binary.java'],
@@ -803,6 +816,7 @@ public class ConfigurableAttributesTest extends BuildViewTestCase {
     scratch.file(
         "java/a/BUILD",
         """
+        load("@rules_java//java:defs.bzl", "java_binary", "java_library")
         java_binary(
             name = 'binary',
             srcs = ['binary.java'],
@@ -860,6 +874,7 @@ public class ConfigurableAttributesTest extends BuildViewTestCase {
     scratch.file(
         "java/hello/BUILD",
         """
+        load("@rules_java//java:defs.bzl", "java_binary")
         java_binary(
             name = 'hello_default_no_match_error',
             srcs = select({
@@ -925,6 +940,7 @@ public class ConfigurableAttributesTest extends BuildViewTestCase {
     scratch.file(
         "java/foo/BUILD",
         """
+        load("@rules_java//java:defs.bzl", "java_binary", "java_library")
         load(':rule.bzl', 'myrule')
         myrule(
             name = 'mytarget',
@@ -983,6 +999,7 @@ public class ConfigurableAttributesTest extends BuildViewTestCase {
     scratch.file(
         "java/foo/BUILD",
         """
+        load("@rules_java//java:defs.bzl", "java_binary", "java_library")
         load(':rule.bzl', 'myrule')
         myrule(
             name = 'mytarget',
@@ -1040,6 +1057,7 @@ public class ConfigurableAttributesTest extends BuildViewTestCase {
     scratch.file(
         "java/foo/BUILD",
         """
+        load("@rules_java//java:defs.bzl", "java_binary", "java_library")
         load(':rule.bzl', 'myrule')
         myrule(
             name = 'mytarget',
@@ -1112,6 +1130,7 @@ public class ConfigurableAttributesTest extends BuildViewTestCase {
     scratch.file(
         "java/foo/BUILD",
         """
+        load("@rules_java//java:defs.bzl", "java_library")
         load(':rule.bzl', 'myrule')
         myrule(
             name = 'mytarget',
@@ -1164,6 +1183,7 @@ public class ConfigurableAttributesTest extends BuildViewTestCase {
     scratch.file(
         "java/foo/BUILD",
         """
+        load("@rules_java//java:defs.bzl", "java_binary")
         java_binary(
             name = 'binary',
             srcs = select({
@@ -1185,6 +1205,7 @@ public class ConfigurableAttributesTest extends BuildViewTestCase {
     scratch.file(
         "java/foo/BUILD",
         """
+        load("@rules_java//java:defs.bzl", "java_binary")
         java_binary(
             name = 'binary',
             srcs = glob(['globbed/*.java']) + select({
@@ -1230,6 +1251,7 @@ public class ConfigurableAttributesTest extends BuildViewTestCase {
     scratch.file(
         "java/foo/BUILD",
         """
+        load("@rules_java//java:defs.bzl", "java_binary")
         java_binary(
             name = 'binary',
             srcs = ['binary.java'] + select({
@@ -2099,6 +2121,7 @@ public class ConfigurableAttributesTest extends BuildViewTestCase {
     scratch.file(
         "java/foo/BUILD",
         """
+        load("@rules_java//java:defs.bzl", "java_library")
         load('//java:macros.bzl', 'my_java_binary')
         my_java_binary(
             name = 'binary',
@@ -2143,5 +2166,121 @@ public class ConfigurableAttributesTest extends BuildViewTestCase {
     AttributeMap attributes = getMapperFromConfiguredTargetAndTarget(ctad);
     assertThat(attributes.get("string_list_dict_attr", Types.STRING_LIST_DICT))
         .containsExactly("a", Arrays.asList("a.out"), "b", Arrays.asList("b.out"));
+  }
+
+  @Test
+  public void assigningSelectToNonconfigurableAttr_fails_evenIfSelectIsSimplifiableUnconditional()
+      throws Exception {
+    writeConfigRules();
+    scratch.file(
+        "foo/BUILD",
+        """
+        rule_with_output_attr(
+            name = "foo",
+            out = select({"//conditions:default": "default.out"}),
+        )
+        """);
+
+    reporter.removeHandler(failFastHandler); // Expect errors.
+    getConfiguredTarget("//foo");
+    assertContainsEvent("attribute \"out\" is not configurable");
+  }
+
+  @Test
+  public void incompatibleSimplifyUnconditionalSelectsInRuleAttrs_doesNotAffectConfiguredAttrValue()
+      throws Exception {
+    scratch.file(
+        "foo/BUILD",
+        """
+        cc_binary(
+            name = "foo",
+            srcs = select({"//conditions:default": ["foo.cc"]}),
+            link_extra_lib = select({"//conditions:default": None}),
+        )
+        """);
+    setBuildLanguageOptions("--incompatible_simplify_unconditional_selects_in_rule_attrs=false");
+    AttributeMap attributesFromUnsimplifiedSelects =
+        getMapperFromConfiguredTargetAndTarget(getConfiguredTargetAndData("//foo"));
+
+    assertThat(attributesFromUnsimplifiedSelects.get("srcs", BuildType.LABEL_LIST))
+        .containsExactly(Label.parseCanonicalUnchecked("//foo:foo.cc"));
+    assertThat(attributesFromUnsimplifiedSelects.get("link_extra_lib", BuildType.LABEL))
+        .isEqualTo(
+            attributesFromUnsimplifiedSelects
+                .getAttributeDefinition("link_extra_lib")
+                .getDefaultValueUnchecked());
+
+    setBuildLanguageOptions("--incompatible_simplify_unconditional_selects_in_rule_attrs=true");
+    AttributeMap attributesFromSimplifiedSelects =
+        getMapperFromConfiguredTargetAndTarget(getConfiguredTargetAndData("//foo"));
+
+    assertThat(attributesFromSimplifiedSelects.get("srcs", BuildType.LABEL_LIST))
+        .isEqualTo(attributesFromUnsimplifiedSelects.get("srcs", BuildType.LABEL_LIST));
+    assertThat(attributesFromSimplifiedSelects.get("link_extra_lib", BuildType.LABEL))
+        .isEqualTo(attributesFromUnsimplifiedSelects.get("link_extra_lib", BuildType.LABEL));
+  }
+
+  @Test
+  public void selectOnTestOptions_notTrimmed() throws Exception {
+    writeHelloRules(/* includeDefaultCondition= */ true);
+    scratch.file(
+        "conditions/BUILD",
+        """
+        config_setting(
+            name = 'a',
+            values = {
+                "test_timeout": "10",
+            },
+        )
+        config_setting(
+            name = 'b',
+            values = {
+                "test_timeout": "20",
+            },
+        )
+        """);
+    checkRule(
+        "//java/hello:hello",
+        "--trim_test_configuration=false",
+        /*expected:*/ ImmutableList.of(DEFAULTDEP_INPUT),
+        /*not expected:*/ ImmutableList.of(ADEP_INPUT, BDEP_INPUT));
+    checkRule(
+        "//java/hello:hello",
+        ImmutableList.of("--trim_test_configuration=false", "--test_timeout=10"),
+        /*expected:*/ ImmutableList.of(ADEP_INPUT),
+        /*not expected:*/ ImmutableList.of(BDEP_INPUT, DEFAULTDEP_INPUT));
+  }
+
+  @Test
+  public void selectOnTestOptions_trimmed() throws Exception {
+    // When --trime_test_configuration is set, all test options are considered to be unset (not
+    // their default value).
+    writeHelloRules(/* includeDefaultCondition= */ true);
+    scratch.file(
+        "conditions/BUILD",
+        """
+        config_setting(
+            name = 'a',
+            values = {
+                "test_timeout": "10",
+            },
+        )
+        config_setting(
+            name = 'b',
+            values = {
+                "test_timeout": "20",
+            },
+        )
+        """);
+    checkRule(
+        "//java/hello:hello",
+        "--trim_test_configuration=true",
+        /*expected:*/ ImmutableList.of(DEFAULTDEP_INPUT),
+        /*not expected:*/ ImmutableList.of(ADEP_INPUT, BDEP_INPUT));
+    checkRule(
+        "//java/hello:hello",
+        ImmutableList.of("--trim_test_configuration=true", "--test_timeout=10"),
+        /*expected:*/ ImmutableList.of(DEFAULTDEP_INPUT),
+        /*not expected:*/ ImmutableList.of(ADEP_INPUT, BDEP_INPUT));
   }
 }

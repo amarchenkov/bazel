@@ -49,6 +49,7 @@ import com.google.devtools.build.lib.actions.TotalAndConfiguredTargetOnlyMetric;
 import com.google.devtools.build.lib.analysis.AnalysisFailureEvent;
 import com.google.devtools.build.lib.analysis.AnalysisOperationWatcher;
 import com.google.devtools.build.lib.analysis.AnalysisPhaseCompleteEvent;
+import com.google.devtools.build.lib.analysis.AspectValue;
 import com.google.devtools.build.lib.analysis.CachingAnalysisEnvironment;
 import com.google.devtools.build.lib.analysis.ConfiguredAspect;
 import com.google.devtools.build.lib.analysis.ConfiguredRuleClassProvider;
@@ -65,6 +66,7 @@ import com.google.devtools.build.lib.analysis.TopLevelArtifactContext;
 import com.google.devtools.build.lib.analysis.ViewCreationFailedException;
 import com.google.devtools.build.lib.analysis.config.AdditionalConfigurationChangeEvent;
 import com.google.devtools.build.lib.analysis.config.BuildConfigurationValue;
+import com.google.devtools.build.lib.analysis.config.BuildOptions;
 import com.google.devtools.build.lib.analysis.config.ConfigConditions;
 import com.google.devtools.build.lib.analysis.config.InvalidConfigurationException;
 import com.google.devtools.build.lib.analysis.config.OptionsDiff;
@@ -157,6 +159,7 @@ public final class SkyframeBuildView {
 
   // Null until the build configuration is set.
   @Nullable private BuildConfigurationValue configuration;
+  @Nullable private BuildOptions originalConfigurationOptions;
 
   /**
    * If the last build was executed with {@code Options#discard_analysis_cache} and we are not
@@ -225,16 +228,8 @@ public final class SkyframeBuildView {
    */
   @Nullable
   private String describeConfigurationDifference(
-      BuildConfigurationValue configuration, int maxDifferencesToShow) {
-    if (this.configuration == null) {
-      return null;
-    }
-    if (configuration.equals(this.configuration)) {
-      return null;
-    }
-
-    OptionsDiff diff =
-        OptionsDiff.diff(this.configuration.getOptions(), configuration.getOptions());
+      BuildOptions oldOptions, BuildOptions newOptions, int maxDifferencesToShow) {
+    OptionsDiff diff = OptionsDiff.diff(oldOptions, newOptions);
 
     ImmutableSet<OptionDefinition> nativeCacheInvalidatingDifferences =
         getNativeCacheInvalidatingDifferences(configuration, diff);
@@ -295,51 +290,80 @@ public final class SkyframeBuildView {
         .collect(toImmutableSet());
   }
 
-  /** Sets the configuration. Not thread-safe. DO NOT CALL except from tests! */
-  @VisibleForTesting
-  public void setConfiguration(
+  /**
+   * Returns whether the analysis results from previous invocations should be discarded or report an
+   * error if it should be, but it's disallowed.
+   *
+   * <p>This should happen when the top-level configuration has changed or if the previous
+   * invocation decided that this should happen. Either way, this method also emits a message
+   * informing the user about this decision.
+   */
+  public boolean shouldDiscardAnalysisCache(
       EventHandler eventHandler,
-      BuildConfigurationValue configuration,
+      BuildOptions newOptions,
       int maxDifferencesToShow,
       boolean allowAnalysisCacheDiscards,
       Optional<AdditionalConfigurationChangeEvent> additionalConfigurationChangeEvent)
       throws InvalidConfigurationException {
+    if (this.configuration == null) {
+      return false;
+    }
+
     if (skyframeAnalysisWasDiscarded) {
+      logger.atInfo().log("Discarding analysis cache because the previous invocation told us to");
       eventHandler.handle(
           Event.warn(
               "--discard_analysis_cache was used in the previous build, "
                   + "discarding analysis cache."));
-      logger.atInfo().log("Discarding analysis cache because the previous invocation told us to");
+      return true;
+    }
+
+    String diff =
+        describeConfigurationDifference(
+            originalConfigurationOptions, newOptions, maxDifferencesToShow);
+
+    if (diff == null && additionalConfigurationChangeEvent.isPresent()) {
+      diff = additionalConfigurationChangeEvent.get().getChangeDescription();
+    }
+
+    if (diff != null) {
+      if (!allowAnalysisCacheDiscards) {
+        String message = String.format("%s, analysis cache would have been discarded.", diff);
+        throw new InvalidConfigurationException(
+            message, FailureDetails.BuildConfiguration.Code.CONFIGURATION_DISCARDED_ANALYSIS_CACHE);
+      }
+      eventHandler.handle(
+          Event.warn(
+              diff
+                  + ", discarding analysis cache (this can be expensive, see"
+                  + " https://bazel.build/advanced/performance/iteration-speed)."));
+      logger.atInfo().log(
+          "Discarding analysis cache because the build configuration changed: %s", diff);
+      return true;
+    }
+
+    return false;
+  }
+
+  /** Sets the configuration. Not thread-safe. */
+  @VisibleForTesting
+  public void setConfiguration(
+      BuildConfigurationValue configuration,
+      BuildOptions originalOptions,
+      boolean discardAnalysisCache) {
+    if (discardAnalysisCache) {
+      // Note that clearing the analysis cache is currently required for correctness. It is also
+      // helpful to save memory.
+      //
+      // If we had more memory, fixing the correctness issue (see also b/144932999) would allow us
+      // to not invalidate the cache, leading to potentially better performance on incremental
+      // builds.
       this.configuration = configuration;
+      this.originalConfigurationOptions = originalOptions;
       skyframeExecutor.handleAnalysisInvalidatingChange();
-    } else {
-      String diff = describeConfigurationDifference(configuration, maxDifferencesToShow);
-      if (diff == null && additionalConfigurationChangeEvent.isPresent()) {
-        diff = additionalConfigurationChangeEvent.get().getChangeDescription();
-      }
+    } else if (this.configuration == null) {
       this.configuration = configuration;
-      if (diff != null) {
-        if (!allowAnalysisCacheDiscards) {
-          String message = String.format("%s, analysis cache would have been discarded.", diff);
-          throw new InvalidConfigurationException(
-              message,
-              FailureDetails.BuildConfiguration.Code.CONFIGURATION_DISCARDED_ANALYSIS_CACHE);
-        }
-        eventHandler.handle(
-            Event.warn(
-                diff
-                    + ", discarding analysis cache (this can be expensive, see"
-                    + " https://bazel.build/advanced/performance/iteration-speed)."));
-        logger.atInfo().log(
-            "Discarding analysis cache because the build configuration changed: %s", diff);
-        // Note that clearing the analysis cache is currently required for correctness. It is also
-        // helpful to save memory.
-        //
-        // If we had more memory, fixing the correctness issue (see also b/144932999) would allow us
-        // to not invalidate the cache, leading to potentially better performance on incremental
-        // builds.
-        skyframeExecutor.handleAnalysisInvalidatingChange();
-      }
+      this.originalConfigurationOptions = originalOptions;
     }
 
     skyframeAnalysisWasDiscarded = false;
@@ -425,10 +449,10 @@ public final class SkyframeBuildView {
         BuildGraphMetrics buildGraphMetrics =
             analysisTraversalResult
                 .getMetrics()
-                .setOutputArtifactCount(conflictsAndStats.getOutputArtifactCount())
+                .setOutputArtifactCount(conflictsAndStats.outputArtifactCount())
                 .build();
         eventBus.post(new AnalysisGraphStatsEvent(buildGraphMetrics));
-        interTargetConflicts = conflictsAndStats.getConflicts();
+        interTargetConflicts = conflictsAndStats.conflicts();
         someActionLookupValueEvaluated = false;
       }
     }
@@ -610,6 +634,7 @@ public final class SkyframeBuildView {
       boolean extraActionTopLevelOnly,
       QuiescingExecutors executors,
       boolean shouldDiscardAnalysisCache,
+      boolean shouldClearSyscallCache,
       BuildDriverKeyTestContext buildDriverKeyTestContext,
       int skymeldAnalysisOverlapPercentage)
       throws InterruptedException,
@@ -690,7 +715,8 @@ public final class SkyframeBuildView {
                     buildResultListener,
                     skyframeExecutor,
                     ctKeys,
-                    shouldDiscardAnalysisCache,
+                    /* shouldDiscardAnalysisCache= */ shouldDiscardAnalysisCache,
+                    /* shouldClearSyscallCache= */ shouldClearSyscallCache,
                     /* measuredAnalysisTime= */ analysisWorkTimer.stop().elapsed().toMillis(),
                     /* conflictCheckingMode= */ conflictCheckingMode),
             /* executionGoAheadCallback= */ executor::launchQueuedUpExecutionPhaseTasks)) {
@@ -713,6 +739,9 @@ public final class SkyframeBuildView {
                   executors.executionParallelism(),
                   executor);
         } finally {
+          if (shouldClearSyscallCache) {
+            skyframeExecutor.clearSyscallCache();
+          }
           // Required for incremental correctness.
           // We unconditionally reset the states here instead of in #analysisFinishedCallback since
           // in case of --nokeep_going & analysis error, the analysis phase is never finished.
@@ -885,6 +914,7 @@ public final class SkyframeBuildView {
       SkyframeExecutor skyframeExecutor,
       List<ConfiguredTargetKey> configuredTargetKeys,
       boolean shouldDiscardAnalysisCache,
+      boolean shouldClearSyscallCache,
       long measuredAnalysisTime,
       ConflictCheckingMode conflictCheckingMode)
       throws InterruptedException {
@@ -917,7 +947,9 @@ public final class SkyframeBuildView {
 
     // Clearing the syscall cache here to free up some heap space.
     // TODO(b/273225564) Would this incur more CPU cost for the execution phase cache misses?
-    skyframeExecutor.clearSyscallCache();
+    if (shouldClearSyscallCache) {
+      skyframeExecutor.clearSyscallCache();
+    }
 
     enableAnalysis(false);
 
@@ -1387,6 +1419,7 @@ public final class SkyframeBuildView {
    */
   public void reset() {
     configuration = null;
+    originalConfigurationOptions = null;
     skyframeAnalysisWasDiscarded = false;
     clearLegacyData();
   }
@@ -1450,7 +1483,7 @@ public final class SkyframeBuildView {
       if (!(skyKey instanceof ActionLookupKey)) {
         return;
       }
-      if (!state.changed()) {
+      if (!state.versionChanged()) {
         // ActionLookupValue subclasses don't implement equality, so must have been marked clean.
         dirtiedActionLookupKeys.remove(skyKey);
       } else if (state.succeeded()) {
@@ -1469,6 +1502,18 @@ public final class SkyframeBuildView {
         }
         configuredObjectCount.incrementAndGet();
         if (newValue instanceof ActionLookupValue alv) {
+          if (alv instanceof AspectValue) {
+            if (AspectValue.isForAliasTarget((AspectValue) alv)) {
+              // Created actions will be counted from {@link AspectValue} on the original target.
+              return;
+            }
+          }
+          if (alv.getNumActions() == 0) {
+            // No actions in deserialized action lookup values, and calling #getActions will
+            // cause an NPE.
+            return;
+          }
+
           // During multithreaded operation, this is only set to true, so no concurrency issues.
           someActionLookupValueEvaluated = true;
           ImmutableList<ActionAnalysisMetadata> actions = alv.getActions();

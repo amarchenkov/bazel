@@ -49,11 +49,6 @@ msys*|mingw*|cygwin*)
   ;;
 esac
 
-if "$is_windows"; then
-  export MSYS_NO_PATHCONV=1
-  export MSYS2_ARG_CONV_EXCL="*"
-fi
-
 RULES_JAVA_REPO_NAME=$(cat "$(rlocation io_bazel/src/test/shell/bazel/RULES_JAVA_REPO_NAME)")
 JAVA_TOOLS_ZIP="$1"; shift
 JAVA_TOOLS_PREBUILT_ZIP="$1"; shift
@@ -65,6 +60,8 @@ override_java_tools "${RULES_JAVA_REPO_NAME}" "${JAVA_TOOLS_ZIP}" "${JAVA_TOOLS_
 # runtime 11 to test for failures in incompatible system classpaths.
 add_to_bazelrc "build --java_runtime_version=11"
 add_to_bazelrc "build --tool_java_runtime_version=11"
+
+add_protobuf "MODULE.bazel"
 
 # Java source files version shall match --java_language_version_flag version.
 function test_java17_text_block() {
@@ -106,6 +103,7 @@ EOF
 }
 
 function test_incompatible_system_classpath() {
+  add_rules_java MODULE.bazel
   mkdir -p pkg
   # This test defines a custom Java toolchain as it relies on the availability of a runtime that is
   # strictly newer than the one specified as the toolchain's java_runtime.
@@ -120,7 +118,7 @@ default_java_toolchain(
     name = "java_toolchain",
     source_version = "17",
     target_version = "17",
-    java_runtime = "@bazel_tools//tools/jdk:remotejdk_17",
+    java_runtime = "@rules_java//toolchains:remotejdk_17",
 )
 EOF
 

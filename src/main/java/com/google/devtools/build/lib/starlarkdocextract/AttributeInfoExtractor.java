@@ -14,6 +14,8 @@
 
 package com.google.devtools.build.lib.starlarkdocextract;
 
+import static com.google.devtools.build.lib.util.StringEncoding.internalToUnicode;
+
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableSet;
 import com.google.devtools.build.lib.packages.Attribute;
@@ -23,44 +25,31 @@ import com.google.devtools.build.lib.packages.Type;
 import com.google.devtools.build.lib.packages.Types;
 import com.google.devtools.build.lib.starlarkdocextract.StardocOutputProtos.AttributeInfo;
 import com.google.devtools.build.lib.starlarkdocextract.StardocOutputProtos.AttributeType;
+import com.google.devtools.build.lib.util.StringEncoding;
+import java.util.Map;
 import java.util.Optional;
 import java.util.function.Consumer;
+import net.starlark.java.eval.Starlark.InvalidStarlarkValueException;
 
 /** Starlark API documentation extractor for a rule, macro, or aspect attribute. */
 @VisibleForTesting
 public final class AttributeInfoExtractor {
+  @VisibleForTesting public static final String UNREPRESENTABLE_VALUE = "<unrepresentable value>";
 
-  @VisibleForTesting
-  public static final AttributeInfo IMPLICIT_NAME_ATTRIBUTE_INFO =
-      AttributeInfo.newBuilder()
-          .setName("name")
-          .setType(AttributeType.NAME)
-          .setMandatory(true)
-          .setDocString("A unique name for this target.")
-          .build();
-
-  @VisibleForTesting
-  public static final AttributeInfo IMPLICIT_MACRO_NAME_ATTRIBUTE_INFO =
-      AttributeInfo.newBuilder()
-          .setName("name")
-          .setType(AttributeType.NAME)
-          .setMandatory(true)
-          .setDocString(
-              "A unique name for this macro instance. Normally, this is also the name for the"
-                  + " macro's main or only target. The names of any other targets that this macro"
-                  + " might create will be this name with a string suffix.")
-          .build();
-
-  static AttributeInfo buildAttributeInfo(
-      ExtractorContext context, Attribute attribute, String where) throws ExtractionException {
+  static AttributeInfo buildAttributeInfo(ExtractorContext context, Attribute attribute) {
     AttributeInfo.Builder builder =
         AttributeInfo.newBuilder()
-            .setName(attribute.getPublicName())
-            .setType(getAttributeType(attribute, where))
+            .setName(internalToUnicode(attribute.getPublicName()))
+            .setType(getAttributeType(context, attribute.getType(), attribute.getPublicName()))
             .setMandatory(attribute.isMandatory());
-    Optional.ofNullable(attribute.getDoc()).ifPresent(builder::setDocString);
+    Optional.ofNullable(attribute.getDoc())
+        .map(StringEncoding::internalToUnicode)
+        .ifPresent(builder::setDocString);
     if (!attribute.isConfigurable()) {
       builder.setNonconfigurable(true);
+    }
+    if (!attribute.starlarkDefined()) {
+      builder.setNativelyDefined(true);
     }
     for (ImmutableSet<StarlarkProviderIdentifier> providerGroup :
         attribute.getRequiredProviders().getStarlarkProviders()) {
@@ -71,36 +60,54 @@ public final class AttributeInfoExtractor {
     }
 
     if (!attribute.isMandatory()) {
-      Object defaultValue = Attribute.valueToStarlark(attribute.getDefaultValueUnchecked());
-      builder.setDefaultValue(context.getLabelRenderer().reprWithoutLabelConstructor(defaultValue));
+      try {
+        Object defaultValue = Attribute.valueToStarlark(attribute.getDefaultValueUnchecked());
+        builder.setDefaultValue(
+            StringEncoding.internalToUnicode(
+                context.labelRenderer().reprWithoutLabelConstructor(defaultValue)));
+      } catch (InvalidStarlarkValueException e) {
+        builder.setDefaultValue(UNREPRESENTABLE_VALUE);
+      }
     }
     return builder.build();
   }
 
+  /**
+   * Adds {@code implicitAttributeInfos}, followed by documentable attributes from {@code
+   * attributes}.
+   */
   static void addDocumentableAttributes(
       ExtractorContext context,
+      Map<String, AttributeInfo> implicitAttributeInfos,
       Iterable<Attribute> attributes,
-      Consumer<AttributeInfo> builder,
-      String where)
-      throws ExtractionException {
+      Consumer<AttributeInfo> builder) {
+    // Inject implicit attributes first.
+    for (AttributeInfo implicitAttributeInfo : implicitAttributeInfos.values()) {
+      builder.accept(implicitAttributeInfo);
+    }
     for (Attribute attribute : attributes) {
-      if (attribute.starlarkDefined()
+      if (implicitAttributeInfos.containsKey(attribute.getName())) {
+        continue;
+      }
+      if ((attribute.starlarkDefined() || context.extractNativelyDefinedAttrs())
           && attribute.isDocumented()
           && ExtractorContext.isPublicName(attribute.getPublicName())) {
-        builder.accept(buildAttributeInfo(context, attribute, where));
+        builder.accept(buildAttributeInfo(context, attribute));
       }
     }
   }
 
-  static AttributeType getAttributeType(Attribute attribute, String where)
-      throws ExtractionException {
-    Type<?> type = attribute.getType();
+  static AttributeType getAttributeType(
+      ExtractorContext context, Type<?> type, String attributePublicName) {
     if (type.equals(Type.INTEGER)) {
       return AttributeType.INT;
-    } else if (type.equals(BuildType.LABEL)) {
+    } else if (type.equals(BuildType.LABEL)
+        || type.equals(BuildType.NODEP_LABEL)
+        || type.equals(BuildType.GENQUERY_SCOPE_TYPE)
+        || type.equals(BuildType.DORMANT_LABEL)) {
       return AttributeType.LABEL;
-    } else if (type.equals(Type.STRING)) {
-      if (attribute.getPublicName().equals("name")) {
+    } else if (type.equals(Type.STRING) || type.equals(Type.STRING_NO_INTERN)) {
+      if (attributePublicName.equals("name")) {
         return AttributeType.NAME;
       } else {
         return AttributeType.STRING;
@@ -109,7 +116,10 @@ public final class AttributeInfoExtractor {
       return AttributeType.STRING_LIST;
     } else if (type.equals(Types.INTEGER_LIST)) {
       return AttributeType.INT_LIST;
-    } else if (type.equals(BuildType.LABEL_LIST)) {
+    } else if (type.equals(BuildType.LABEL_LIST)
+        || type.equals(BuildType.NODEP_LABEL_LIST)
+        || type.equals(BuildType.GENQUERY_SCOPE_TYPE_LIST)
+        || type.equals(BuildType.DORMANT_LABEL_LIST)) {
       return AttributeType.LABEL_LIST;
     } else if (type.equals(Type.BOOLEAN)) {
       return AttributeType.BOOLEAN;
@@ -119,22 +129,27 @@ public final class AttributeInfoExtractor {
       return AttributeType.STRING_DICT;
     } else if (type.equals(Types.STRING_LIST_DICT)) {
       return AttributeType.STRING_LIST_DICT;
+    } else if (type.equals(BuildType.LABEL_LIST_DICT)) {
+      return AttributeType.LABEL_LIST_DICT;
+    } else if (type.equals(BuildType.LABEL_DICT_UNARY)) {
+      return AttributeType.LABEL_DICT_UNARY;
     } else if (type.equals(BuildType.OUTPUT)) {
       return AttributeType.OUTPUT;
     } else if (type.equals(BuildType.OUTPUT_LIST)) {
       return AttributeType.OUTPUT_LIST;
-    } else if (type.equals(BuildType.LICENSE)) {
+    } else if (type.equals(BuildType.LICENSE) || type.equals(BuildType.DISTRIBUTIONS)) {
       // TODO(https://github.com/bazelbuild/bazel/issues/6420): deprecated, disabled in Bazel by
       // default, broken and with almost no remaining users, so we don't have an AttributeType for
       // it. Until this type is removed, following the example of legacy Stardoc, pretend it's a
       // list of strings.
       return AttributeType.STRING_LIST;
+    } else if (type.equals(BuildType.TRISTATE)) {
+      // Given that the native TRISTATE type is not exposed to Starlark attr API, let's treat it as
+      // an integer.
+      return AttributeType.INT;
     }
 
-    throw new ExtractionException(
-        String.format(
-            "in %s attribute %s: unsupported type %s",
-            where, attribute.getPublicName(), type.getClass().getSimpleName()));
+    return AttributeType.UNKNOWN;
   }
 
   private AttributeInfoExtractor() {}

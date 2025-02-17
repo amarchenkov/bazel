@@ -185,9 +185,35 @@ public final class DependencyResolutionHelpers {
   }
 
   public static ExecutionPlatformResult getExecutionPlatformLabel(
-      DependencyKind kind,
+      AttributeDependencyKind kind,
       @Nullable ToolchainCollection<ToolchainContext> toolchainContexts,
+      @Nullable ToolchainCollection<UnloadedToolchainContext> baseTargetUnloadedToolchainContexts,
       ImmutableList<Aspect> aspectsList) {
+    if (aspectsList.isEmpty() || isMainAspect(aspectsList, kind.getOwningAspect())) {
+      return getExecutionPlatformLabel(kind, toolchainContexts);
+    } else if (kind.getOwningAspect() == null) {
+      // During aspect evaluation, use {@code baseTargetUnloadedToolchainContexts} for the base
+      // target's dependencies.
+      return getExecutionPlatformLabel(kind, baseTargetUnloadedToolchainContexts);
+    } else {
+      ExecutionPlatformResult executionPlatformResult =
+          getExecutionPlatformLabel(kind, toolchainContexts);
+      if (executionPlatformResult.kind() == ExecutionPlatformResult.Kind.ERROR) {
+        // TODO(b/373963347): Make the toolchain contexts of base aspects available to be used with
+        // their corresponding dependencies.
+        // Currently dependencies of the base aspects are resolved with the toolchain context of the
+        // main aspect, skip errors as actual errors would be reported during the base aspect
+        // evaluation.
+        return ExecutionPlatformResult.ofSkip();
+      } else {
+        return executionPlatformResult;
+      }
+    }
+  }
+
+  private static ExecutionPlatformResult getExecutionPlatformLabel(
+      AttributeDependencyKind kind,
+      @Nullable ToolchainCollection<? extends ToolchainContext> toolchainContexts) {
     if (toolchainContexts == null) {
       return ExecutionPlatformResult.ofNullLabel();
     }
@@ -208,16 +234,6 @@ public final class DependencyResolutionHelpers {
       return platform == null
           ? ExecutionPlatformResult.ofNullLabel()
           : ExecutionPlatformResult.ofLabel(platform.label());
-    }
-
-    // `execGroup` could not be found. If `aspectsList` is non-empty, `toolchainContexts` only
-    // contains the exec groups of the main aspect. Skips the dependency if it's not the main
-    // aspect.
-    //
-    // TODO(b/256617733): Make a decision on whether the exec groups of the target and the base
-    // aspects should be merged in `toolchainContexts`.
-    if (!aspectsList.isEmpty() && !isMainAspect(aspectsList, kind.getOwningAspect())) {
-      return ExecutionPlatformResult.ofSkip();
     }
 
     return ExecutionPlatformResult.ofError(
@@ -319,8 +335,7 @@ public final class DependencyResolutionHelpers {
       ToolchainCollection<ToolchainContext> toolchainContexts,
       OrderedSetMultimap<DependencyKind, Label> outgoingLabels) {
     if (toolchainContexts != null) {
-      for (Map.Entry<String, ToolchainContext> entry :
-          toolchainContexts.getContextMap().entrySet()) {
+      for (Map.Entry<String, ToolchainContext> entry : toolchainContexts.contextMap().entrySet()) {
         outgoingLabels.putAll(
             DependencyKind.forExecGroup(entry.getKey()),
             entry.getValue().resolvedToolchainLabels());
@@ -335,7 +350,7 @@ public final class DependencyResolutionHelpers {
       return;
     }
     for (Map.Entry<String, UnloadedToolchainContext> execGroup :
-        toolchainContexts.getContextMap().entrySet()) {
+        toolchainContexts.contextMap().entrySet()) {
       for (var toolchainTypeToResolved :
           execGroup.getValue().toolchainTypeToResolved().asMap().entrySet()) {
         // map entries from (exec group, toolchain type) to resolved toolchain labels. We need to
@@ -414,6 +429,11 @@ public final class DependencyResolutionHelpers {
                     ? computedDefault.getDefault(attributeMap)
                     : defaultValue);
       }
+    } else if (attribute.isMaterializing()) {
+      // These attributes are resolved by calling the materializer function in
+      // DependencyMapProducer. The reason is that they need the analyzed versions some direct
+      // dependencies and we can't do that here.
+      outgoingLabels.put(dependencyKind, null);
     } else if (attribute.isLateBound()) {
       attributeValue =
           type.cast(resolveLateBoundDefault(rule, attributeMap, attribute, ruleConfig));
@@ -450,16 +470,13 @@ public final class DependencyResolutionHelpers {
       if (BuildConfigurationValue.class.equals(fragmentClass)
           // noconfig targets can't meaningfully parse late-bound defaults. See NoConfigTransition.
           && !ruleConfig.getOptions().hasNoConfig()) {
-        return lateBoundDefault.resolve(
-            rule,
-            attributeMap,
-            fragmentClass.cast(ruleConfig),
-            /* ctx= */ null,
-            /* eventHandler= */ null);
+        return lateBoundDefault.resolve(rule, attributeMap, fragmentClass.cast(ruleConfig));
       }
       if (Void.class.equals(fragmentClass)) {
         return lateBoundDefault.resolve(
-            rule, attributeMap, /* input= */ null, /* ctx= */ null, /* eventHandler= */ null);
+            rule, attributeMap, /* input= */ null
+            /* analysisContext= */
+            /* eventHandler= */ );
       }
       @SuppressWarnings("unchecked")
       FragmentT fragment =
@@ -468,7 +485,9 @@ public final class DependencyResolutionHelpers {
         return null;
       }
       return lateBoundDefault.resolve(
-          rule, attributeMap, fragment, /* ctx= */ null, /* eventHandler= */ null);
+          rule, attributeMap, fragment
+          /* analysisContext= */
+          /* eventHandler= */ );
     } catch (EvalException e) {
       // Materializers should not be called here and those are the only kind of late-bound defaults
       // that can throw these exceptions.
